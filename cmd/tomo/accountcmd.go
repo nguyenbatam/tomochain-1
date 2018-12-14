@@ -211,8 +211,12 @@ func unlockAccount(ctx *cli.Context, ks *keystore.KeyStore, address string, i in
 		utils.Fatalf("Could not list accounts: %v", err)
 	}
 	for trials := 0; trials < 3; trials++ {
-		prompt := fmt.Sprintf("Unlocking account %s | Attempt %d/%d", address, trials+1, 3)
-		password := getPassPhrase(prompt, false, i, passwords)
+		password := ""
+		if len(passwords) > 0 {
+			password = passwords[i]
+			prompt := fmt.Sprintf("Unlocking account %s | Attempt %d/%d", address, trials+1, 3)
+			password = getPassPhrase(prompt, false, i, passwords)
+		}
 		err = ks.Unlock(account, password)
 		if err == nil {
 			log.Info("Unlocked account", "address", account.Address.Hex())
