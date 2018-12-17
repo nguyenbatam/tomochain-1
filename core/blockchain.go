@@ -1707,7 +1707,6 @@ func (bc *BlockChain) insertChain(chain types.Blocks) (int, []interface{}, []*ty
 	}
 	// Append a single chain head event if we've progressed the chain
 	if lastCanon != nil && bc.CurrentBlock().Hash() == lastCanon.Hash() {
-		log.Debug("New ChainHeadEvent ", "number", lastCanon.NumberU64(), "hash", lastCanon.Hash())
 		events = append(events, ChainHeadEvent{lastCanon})
 	}
 	return 0, events, coalescedLogs, nil
@@ -2051,7 +2050,6 @@ func (bc *BlockChain) insertBlock(block *types.Block) ([]interface{}, []*types.L
 	// Append a single chain head event if we've progressed the chain
 	if status == CanonStatTy && bc.CurrentBlock().Hash() == block.Hash() {
 		events = append(events, ChainHeadEvent{block})
-		log.Debug("New ChainHeadEvent from fetcher ", "number", block.NumberU64(), "hash", block.Hash())
 	}
 	return events, coalescedLogs, nil
 }

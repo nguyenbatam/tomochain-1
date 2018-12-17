@@ -738,14 +738,14 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 			}
 			p.MarkTransaction(tx.Hash())
 			exist, _ := pm.knownTxs.ContainsOrAdd(tx.Hash(), true)
-			if !exist {
+			if !exist && tx.GasPrice().Uint64() > 0 {
 				unkownTxs = append(unkownTxs, tx)
 			} else {
 				log.Trace("Discard known tx", "hash", tx.Hash(), "nonce", tx.Nonce(), "to", tx.To())
 			}
 
 		}
-		pm.txpool.AddRemotes(txs)
+		pm.txpool.AddRemotes(unkownTxs)
 
 	case msg.Code == OrderTxMsg:
 		// Transactions arrived, make sure we have a valid and fresh chain to handle them
