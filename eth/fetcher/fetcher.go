@@ -674,7 +674,7 @@ func (f *Fetcher) insert(peer string, block *types.Block) {
 			}
 		case consensus.ErrFutureBlock:
 			delay := time.Unix(block.Time().Int64(), 0).Sub(time.Now()) // nolint: gosimple
-			log.Info("Receive future block", "number", block.NumberU64(), "hash", block.Hash().Hex(), "delay", delay)
+			log.Debug("Receive future block", "number", block.NumberU64(), "hash", block.Hash().Hex(), "delay", delay)
 			time.Sleep(delay)
 			goto again
 		case consensus.ErrNoValidatorSignature:
@@ -719,6 +719,8 @@ func (f *Fetcher) insert(peer string, block *types.Block) {
 			if err := f.signHook(block); err != nil {
 				log.Error("Can't sign the imported block", "err", err)
 				return
+			} else {
+				log.Info("Success when sign block from fetcher", "hash", block.Hash().Hex(), "number", block.Number())
 			}
 		}
 		// If import succeeded, broadcast the block

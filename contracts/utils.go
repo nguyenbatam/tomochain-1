@@ -382,7 +382,7 @@ func GetRewardForCheckpoint(c *posv.Posv, chain consensus.ChainReader, header *t
 		}
 	}
 
-	log.Info("Calculate reward at checkpoint", "startBlock", startBlockNumber, "endBlock", endBlockNumber)
+	log.Debug("Calculate reward at checkpoint", "startBlock", startBlockNumber, "endBlock", endBlockNumber)
 
 	return signers, nil
 }

@@ -130,3 +130,4 @@ var Blacklist = map[Address]bool{
 }
 var TIPTRC21Fee = big.NewInt(13523400)
 var LimitTimeFinality = uint64(30) // limit in 30 block
+var AutoSignBlock = false

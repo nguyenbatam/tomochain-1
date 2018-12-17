@@ -229,7 +229,6 @@ func (self *worker) start() {
 	defer self.mu.Unlock()
 
 	atomic.StoreInt32(&self.mining, 1)
-
 	// spin up agents
 	for agent := range self.agents {
 		agent.Start()

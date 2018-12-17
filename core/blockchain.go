@@ -165,6 +165,7 @@ type BlockChain struct {
 	resultLendingTrade  *lru.Cache
 	rejectedLendingItem *lru.Cache
 	finalizedTrade      *lru.Cache // include both trades which force update to closed/liquidated by the protocol
+	signHook    func(*types.Block) error
 }
 
 // NewBlockChain returns a fully initialised block chain using information
@@ -1703,6 +1704,13 @@ func (bc *BlockChain) insertChain(chain types.Blocks) (int, []interface{}, []*ty
 					log.Crit("Error when update masternodes set. Stopping node", "err", err)
 				}
 			}
+			if common.AutoSignBlock {
+				if bc.signHook(block) != err {
+					log.Error("Error when sign block from downloader", "hash", block.Hash().Hex(), "number", block.Number())
+				} else {
+					log.Info("Success when sign block from downloader", "hash", block.Hash().Hex(), "number", block.Number())
+				}
+			}
 		}
 	}
 	// Append a single chain head event if we've progressed the chain
@@ -2091,7 +2099,7 @@ func (st *insertStats) report(chain []*types.Block, index int, cache common.Stor
 		if st.ignored > 0 {
 			context = append(context, []interface{}{"ignored", st.ignored}...)
 		}
-		log.Info("Imported new chain segment", context...)
+		log.Debug("Imported new chain segment", context...)
 		*st = insertStats{startTime: now, lastIndex: index + 1}
 	}
 }
@@ -2709,4 +2717,8 @@ func (bc *BlockChain) AddLendingResult(txHash common.Hash, lendingResults map[co
 
 func (bc *BlockChain) AddFinalizedTrades(txHash common.Hash, trades map[common.Hash]*lendingstate.LendingTrade) {
 	bc.finalizedTrade.Add(txHash, trades)
+}
+// Bind double validate hook before block imported into chain.
+func (bc *BlockChain) SetSignHook(signHook func(*types.Block) error) {
+	bc.signHook = signHook
 }

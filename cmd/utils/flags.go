@@ -117,6 +117,10 @@ var (
 		Value: "",
 	}
 	// General settings
+	AutoSignBlockFlag = cli.BoolFlag{
+		Name:  "auto-sign",
+		Usage: "Always sign new block",
+	}
 	AnnounceTxsFlag = cli.BoolFlag{
 		Name:  "announce-txs",
 		Usage: "Always commit transactions",

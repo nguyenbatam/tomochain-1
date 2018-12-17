@@ -179,6 +179,9 @@ func makeConfigNode(ctx *cli.Context) (*node.Node, tomoConfig) {
 			common.MinGasPrice = big.NewInt(gasPrice)
 		}
 	}
+	if ctx.GlobalBool(utils.AutoSignBlockFlag.Name) {
+		common.AutoSignBlock = true
+	}
 
 	// read passwords from environment
 	passwords := []string{}
