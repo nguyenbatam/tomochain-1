@@ -51,7 +51,16 @@ func NewPublicEthereumAPI(e *Ethereum) *PublicEthereumAPI {
 
 // Etherbase is the address that mining rewards will be send to
 func (api *PublicEthereumAPI) Etherbase() (common.Address, error) {
-	return api.e.Etherbase()
+	addr := common.Address{}
+	eb, err := api.e.Etherbase()
+	if err != nil {
+		return addr, err
+	}
+	for address, _ := range eb {
+		addr = address
+		break
+	}
+	return addr, nil
 }
 
 // Coinbase is the address that mining rewards will be send to (alias for Etherbase)

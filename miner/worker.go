@@ -24,6 +24,7 @@ import (
 	"github.com/tomochain/tomochain/accounts"
 	"github.com/tomochain/tomochain/tomoxlending/lendingstate"
 
+	"github.com/tomochain/tomochain/common/math"
 	"math/big"
 	"os"
 	"sync"
@@ -130,7 +131,7 @@ type worker struct {
 	proc    core.Validator
 	chainDb ethdb.Database
 
-	coinbase common.Address
+	coinbase map[common.Address]bool
 	extra    []byte
 
 	currentMu sync.Mutex
@@ -149,6 +150,7 @@ type worker struct {
 }
 
 func newWorker(config *params.ChainConfig, engine consensus.Engine, coinbase common.Address, eth Backend, mux *event.TypeMux, announceTxs bool) *worker {
+	coinbases := map[common.Address]bool{}
 	worker := &worker{
 		config:         config,
 		engine:         engine,
@@ -162,7 +164,7 @@ func newWorker(config *params.ChainConfig, engine consensus.Engine, coinbase com
 		chain:          eth.BlockChain(),
 		proc:           eth.BlockChain().Validator(),
 		possibleUncles: make(map[common.Hash]*types.Block),
-		coinbase:       coinbase,
+		coinbase:       coinbases,
 		agents:         make(map[Agent]struct{}),
 		unconfirmed:    newUnconfirmedBlocks(eth.BlockChain(), miningLogAtDepth),
 		announceTxs:    announceTxs,
@@ -182,7 +184,7 @@ func newWorker(config *params.ChainConfig, engine consensus.Engine, coinbase com
 	return worker
 }
 
-func (self *worker) setEtherbase(addr common.Address) {
+func (self *worker) setEtherbase(addr map[common.Address]bool) {
 	self.mu.Lock()
 	defer self.mu.Unlock()
 	self.coinbase = addr
@@ -306,22 +308,22 @@ func (self *worker) update() {
 				self.uncleMu.Unlock()
 			}
 			// Handle TxPreEvent
-		case ev := <-self.txCh:
+		case <-self.txCh:
 			// Apply transaction to the pending state if we're not mining
-			if atomic.LoadInt32(&self.mining) == 0 {
-				self.currentMu.Lock()
-				acc, _ := types.Sender(self.current.signer, ev.Tx)
-				txs := map[common.Address]types.Transactions{acc: {ev.Tx}}
-				feeCapacity := state.GetTRC21FeeCapacityFromState(self.current.state)
-				txset, specialTxs := types.NewTransactionsByPriceAndNonce(self.current.signer, txs, nil, feeCapacity)
-				self.current.commitTransactions(self.mux, feeCapacity, txset, specialTxs, self.chain, self.coinbase)
-				self.currentMu.Unlock()
-			} else {
-				// If we're mining, but nothing is being processed, wake on new transactions
-				if self.config.Posv != nil && self.config.Posv.Period == 0 {
-					self.commitNewWork()
-				}
-			}
+			//if atomic.LoadInt32(&self.mining) == 0 {
+			//	self.currentMu.Lock()
+			//	acc, _ := types.Sender(self.current.signer, ev.Tx)
+			//	txs := map[common.Address]types.Transactions{acc: {ev.Tx}}
+			//	txset, specialTxs := types.NewTransactionsByPriceAndNonce(self.current.signer, txs, nil)
+			//
+			//	//self.current.commitTransactions(self.mux, txset, specialTxs, self.chain, self.coinbase[0])
+			//	self.currentMu.Unlock()
+			//} else {
+			//	// If we're mining, but nothing is being processed, wake on new transactions
+			//	if self.config.Posv != nil && self.config.Posv.Period == 0 {
+			//		self.commitNewWork()
+			//	}
+			//}
 		case <-self.chainHeadSub.Err():
 			return
 		case <-self.chainSideSub.Err():
@@ -409,11 +411,12 @@ func (self *worker) wait() {
 					log.Error("Fail to get snapshot for sign tx signer.")
 					return
 				}
-				if _, authorized := snap.Signers[self.coinbase]; !authorized {
+				miner, _ := c.GetMiner(block.Header())
+				if _, authorized := snap.Signers[miner]; !authorized {
 					valid := false
 					masternodes := c.GetMasternodes(self.chain, block.Header())
 					for _, m := range masternodes {
-						if m == self.coinbase {
+						if m == miner {
 							valid = true
 							break
 						}
@@ -425,7 +428,7 @@ func (self *worker) wait() {
 				}
 				// Send tx sign to smart contract blockSigners.
 				if block.NumberU64()%common.MergeSignRange == 0 || !self.config.IsTIP2019(block.Number()) {
-					if err := contracts.CreateTransactionSign(self.config, self.eth.TxPool(), self.eth.AccountManager(), block, self.chainDb, self.coinbase); err != nil {
+					if err := contracts.CreateTransactionSign(self.config, self.eth.TxPool(), self.eth.AccountManager(), block, self.chainDb); err != nil {
 						log.Error("Fail to create tx sign for signer", "error", "err")
 					}
 				}
@@ -526,7 +529,7 @@ func (self *worker) commitNewWork() {
 	if !self.announceTxs && atomic.LoadInt32(&self.mining) == 0 {
 		return
 	}
-
+	miner := common.Address{}
 	// Only try to commit new work if we are mining
 	if atomic.LoadInt32(&self.mining) == 1 {
 		// check if we are right after parent's coinbase in the list
@@ -534,36 +537,45 @@ func (self *worker) commitNewWork() {
 		if self.config.Posv != nil {
 			// get masternodes set from latest checkpoint
 			c := self.engine.(*posv.Posv)
-			len, preIndex, curIndex, ok, err := c.YourTurn(self.chain, parent.Header(), self.coinbase)
-			if err != nil {
-				log.Warn("Failed when trying to commit new work", "err", err)
-				return
-			}
-			if !ok {
-				log.Info("Not my turn to commit block. Waiting...")
-				// in case some nodes are down
-				if preIndex == -1 {
-					// first block
-					return
+			ok := false
+			gap := int(math.MaxInt64)
+			for addr, _ := range self.coinbase {
+				len, preIndex, curIndex, status, err := c.YourTurn(self.chain, parent.Header(), addr)
+				if err != nil || (!status && (preIndex == -1 || curIndex == -1)) {
+					log.Debug("Failed when trying to commit new work", "addr", addr, "preIndex", preIndex, "curIndex", curIndex, "err", err)
+					continue
 				}
-				if curIndex == -1 {
-					// you're not allowed to create this block
-					return
+				if status {
+					ok = status
+					miner = addr
+					break
 				}
 				h := posv.Hop(len, preIndex, curIndex)
-				gap := waitPeriod * int64(h)
 				// Check nearest checkpoint block in hop range.
 				nearest := self.config.Posv.Epoch - (parent.Header().Number.Uint64() % self.config.Posv.Epoch)
+				wait := waitPeriod * h
 				if uint64(h) >= nearest {
-					gap = waitPeriodCheckpoint * int64(h)
+					wait = waitPeriodCheckpoint * h
 				}
-				log.Info("Distance from the parent block", "seconds", gap, "hops", h)
-				waitedTime := time.Now().Unix() - parent.Header().Time.Int64()
+				if wait < gap {
+					gap = wait
+					miner = addr
+				}
+			}
+			if !ok {
+				if miner == (common.Address{}) {
+					log.Error("Failed when trying to commit new work", "coinbase", self.coinbase)
+					return
+				}
+				log.Info("Not my turn to commit block. Waiting...")
+				log.Info("Distance from the parent block", "seconds", gap)
+				waitedTime := int(time.Now().Unix() - parent.Header().Time.Int64())
 				if gap > waitedTime {
 					return
 				}
 				log.Info("Wait enough. It's my turn", "waited seconds", waitedTime)
 			}
+			log.Debug("Start commit new work", "miner", miner)
 		}
 	}
 	tstamp := tstart.Unix()
@@ -587,7 +599,7 @@ func (self *worker) commitNewWork() {
 	}
 	// Only set the coinbase if we are mining (avoid spurious block rewards)
 	if atomic.LoadInt32(&self.mining) == 1 {
-		header.Coinbase = self.coinbase
+		header.Coinbase = miner
 	}
 
 	if err := self.engine.Prepare(self.chain, header); err != nil {
@@ -645,9 +657,9 @@ func (self *worker) commitNewWork() {
 		txs, specialTxs = types.NewTransactionsByPriceAndNonce(self.current.signer, pending, signers, feeCapacity)
 	}
 	if atomic.LoadInt32(&self.mining) == 1 {
-		wallet, err := self.eth.AccountManager().Find(accounts.Account{Address: self.coinbase})
+		wallet, err := self.eth.AccountManager().Find(accounts.Account{Address: miner})
 		if err != nil {
-			log.Warn("Can't find coinbase account wallet", "coinbase", self.coinbase, "err", err)
+			log.Warn("Can't find coinbase account wallet", "coinbase", miner, "err", err)
 			return
 		}
 		if self.config.Posv != nil && self.chain.Config().IsTIPTomoX(header.Number) {
@@ -667,11 +679,11 @@ func (self *worker) commitNewWork() {
 					log.Debug("Start processing order pending")
 					tradingOrderPending, _ := self.eth.OrderPool().Pending()
 					log.Debug("Start processing order pending", "len", len(tradingOrderPending))
-					tradingTxMatches, tradingMatchingResults = tomoX.ProcessOrderPending(self.coinbase, self.chain, tradingOrderPending, work.state, work.tradingState)
+					tradingTxMatches, tradingMatchingResults = tomoX.ProcessOrderPending(miner, self.chain, tradingOrderPending, work.state, work.tradingState)
 					log.Debug("trading transaction matches found", "tradingTxMatches", len(tradingTxMatches))
 
 					lendingOrderPending, _ := self.eth.LendingPool().Pending()
-					lendingInput, lendingMatchingResults = tomoXLending.ProcessOrderPending(header, self.coinbase, self.chain, lendingOrderPending, work.state, work.lendingState, work.tradingState)
+					lendingInput, lendingMatchingResults = tomoXLending.ProcessOrderPending(header, miner, self.chain, lendingOrderPending, work.state, work.lendingState, work.tradingState)
 					log.Debug("lending transaction matches found", "lendingInput", len(lendingInput), "lendingMatchingResults", len(lendingMatchingResults))
 					if header.Number.Uint64()%self.config.Posv.Epoch == common.LiquidateLendingTradeBlock {
 						updatedTrades, liquidatedTrades, autoRepayTrades, autoTopUpTrades, autoRecallTrades, err = tomoXLending.ProcessLiquidationData(header, self.chain, work.state, work.tradingState, work.lendingState)
@@ -692,9 +704,9 @@ func (self *worker) commitNewWork() {
 						log.Error("Fail to marshal txMatch", "error", err)
 						return
 					}
-					nonce := work.state.GetNonce(self.coinbase)
+					nonce := work.state.GetNonce(miner)
 					tx := types.NewTransaction(nonce, common.HexToAddress(common.TomoXAddr), big.NewInt(0), txMatchGasLimit, big.NewInt(0), txMatchBytes)
-					txM, err := wallet.SignTx(accounts.Account{Address: self.coinbase}, tx, self.config.ChainId)
+					txM, err := wallet.SignTx(accounts.Account{Address: miner}, tx, self.config.ChainId)
 					if err != nil {
 						log.Error("Fail to create tx matches", "error", err)
 						return
@@ -717,9 +729,9 @@ func (self *worker) commitNewWork() {
 						log.Error("Fail to marshal lendingData", "error", err)
 						return
 					}
-					nonce := work.state.GetNonce(self.coinbase)
+					nonce := work.state.GetNonce(miner)
 					lendingTx := types.NewTransaction(nonce, common.HexToAddress(common.TomoXLendingAddress), big.NewInt(0), txMatchGasLimit, big.NewInt(0), lendingDataBytes)
-					signedLendingTx, err := wallet.SignTx(accounts.Account{Address: self.coinbase}, lendingTx, self.config.ChainId)
+					signedLendingTx, err := wallet.SignTx(accounts.Account{Address: miner}, lendingTx, self.config.ChainId)
 					if err != nil {
 						log.Error("Fail to create lending tx", "error", err)
 						return
@@ -738,9 +750,9 @@ func (self *worker) commitNewWork() {
 						log.Error("Fail to marshal lendingData", "error", err)
 						return
 					}
-					nonce := work.state.GetNonce(self.coinbase)
+					nonce := work.state.GetNonce(miner)
 					finalizedTx := types.NewTransaction(nonce, common.HexToAddress(common.TomoXLendingFinalizedTradeAddress), big.NewInt(0), txMatchGasLimit, big.NewInt(0), finalizedTradeData)
-					signedFinalizedTx, err := wallet.SignTx(accounts.Account{Address: self.coinbase}, finalizedTx, self.config.ChainId)
+					signedFinalizedTx, err := wallet.SignTx(accounts.Account{Address: miner}, finalizedTx, self.config.ChainId)
 					if err != nil {
 						log.Error("Fail to create lending tx", "error", err)
 						return
@@ -768,15 +780,15 @@ func (self *worker) commitNewWork() {
 		TomoxStateRoot := work.tradingState.IntermediateRoot()
 		LendingStateRoot := work.lendingState.IntermediateRoot()
 		txData := append(TomoxStateRoot.Bytes(), LendingStateRoot.Bytes()...)
-		tx := types.NewTransaction(work.state.GetNonce(self.coinbase), common.HexToAddress(common.TradingStateAddr), big.NewInt(0), txMatchGasLimit, big.NewInt(0), txData)
-		txStateRoot, err := wallet.SignTx(accounts.Account{Address: self.coinbase}, tx, self.config.ChainId)
+		tx := types.NewTransaction(work.state.GetNonce(miner), common.HexToAddress(common.TradingStateAddr), big.NewInt(0), txMatchGasLimit, big.NewInt(0), txData)
+		txStateRoot, err := wallet.SignTx(accounts.Account{Address: miner}, tx, self.config.ChainId)
 		if err != nil {
 			log.Error("Fail to create tx state root", "error", err)
 			return
 		}
 		specialTxs = append(specialTxs, txStateRoot)
 	}
-	work.commitTransactions(self.mux, feeCapacity, txs, specialTxs, self.chain, self.coinbase)
+	work.commitTransactions(self.mux, feeCapacity, txs, specialTxs, self.chain, miner)
 	// compute uncles for the new block.
 	var (
 		uncles    []*types.Header

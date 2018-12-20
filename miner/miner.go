@@ -54,7 +54,7 @@ type Miner struct {
 
 	worker *worker
 
-	coinbase common.Address
+	coinbase map[common.Address]bool
 	mining   int32
 	eth      Backend
 	engine   consensus.Engine
@@ -104,7 +104,7 @@ func (self *Miner) update() {
 	}
 }
 
-func (self *Miner) Start(coinbase common.Address) {
+func (self *Miner) Start(coinbase map[common.Address]bool) {
 	atomic.StoreInt32(&self.shouldStart, 1)
 	self.SetEtherbase(coinbase)
 
@@ -177,7 +177,7 @@ func (self *Miner) PendingBlock() *types.Block {
 	return self.worker.pendingBlock()
 }
 
-func (self *Miner) SetEtherbase(addr common.Address) {
+func (self *Miner) SetEtherbase(addr map[common.Address]bool) {
 	self.coinbase = addr
 	self.worker.setEtherbase(addr)
 }

@@ -103,7 +103,7 @@ type Ethereum struct {
 
 	miner     *miner.Miner
 	gasPrice  *big.Int
-	etherbase common.Address
+	etherbase map[common.Address]bool
 
 	networkId     uint64
 	netRPCService *ethapi.PublicNetAPI
@@ -140,6 +140,10 @@ func New(ctx *node.ServiceContext, config *Config, tomoXServ *tomox.TomoX, lendi
 
 	log.Info("Initialised chain configuration", "config", chainConfig)
 	signedBlock, _ := lru.NewARC(100)
+	etherbase := map[common.Address]bool{}
+	if config.Etherbase != (common.Address{}) {
+		etherbase[config.Etherbase] = true
+	}
 	eth := &Ethereum{
 		config:         config,
 		chainDb:        chainDb,
@@ -151,7 +155,7 @@ func New(ctx *node.ServiceContext, config *Config, tomoXServ *tomox.TomoX, lendi
 		stopDbUpgrade:  stopDbUpgrade,
 		networkId:      config.NetworkId,
 		gasPrice:       config.GasPrice,
-		etherbase:      config.Etherbase,
+		etherbase:      etherbase,
 		bloomRequests:  make(chan chan *bloombits.Retrieval),
 		bloomIndexer:   NewBloomIndexer(chainDb, params.BloomBitsBlocks),
 		signedBlock:    signedBlock,
@@ -241,21 +245,12 @@ func New(ctx *node.ServiceContext, config *Config, tomoXServ *tomox.TomoX, lendi
 	if eth.chainConfig.Posv != nil {
 		c := eth.engine.(*posv.Posv)
 		signHook := func(block *types.Block) error {
-			eb, err := eth.Etherbase()
-			if err != nil {
-				log.Error("Cannot get etherbase for append m2 header", "err", err)
-				return fmt.Errorf("etherbase missing: %v", err)
-			}
-			ok := eth.txPool.IsSigner != nil && eth.txPool.IsSigner(eb)
-			if !ok {
-				return nil
-			}
 			if signedBlock.Contains(block.Hash()) {
 				log.Debug("Remove duplicate sign block", "hash", block.Hash().Hex(), "number", block.Number())
 				return nil
 			}
 			if block.NumberU64()%common.MergeSignRange == 0 || !eth.chainConfig.IsTIP2019(block.Number()) {
-				if err := contracts.CreateTransactionSign(chainConfig, eth.txPool, eth.accountManager, block, chainDb, eb); err != nil {
+				if err := contracts.CreateTransactionSign(chainConfig, eth.txPool, eth.accountManager, block, chainDb); err != nil {
 					return fmt.Errorf("Fail to create tx sign for importing block: %v", err)
 				} else {
 					signedBlock.Add(block.Hash(), true)
@@ -278,18 +273,10 @@ func New(ctx *node.ServiceContext, config *Config, tomoXServ *tomox.TomoX, lendi
 			if err != nil {
 				return block, false, fmt.Errorf("can't get block validator: %v", err)
 			}
-			if m2 == eb {
-				wallet, err := eth.accountManager.Find(accounts.Account{Address: eb})
-				if err != nil {
-					log.Error("Can't find coinbase account wallet", "err", err)
-					return block, false, err
-				}
+			if _, ok := eb[m2]; ok {
+				wallet, _ := eth.accountManager.Find(accounts.Account{Address: m2})
 				header := block.Header()
-				sighash, err := wallet.SignHash(accounts.Account{Address: eb}, posv.SigHash(header).Bytes())
-				if err != nil || sighash == nil {
-					log.Error("Can't get signature hash of m2", "sighash", sighash, "err", err)
-					return block, false, err
-				}
+				sighash, _ := wallet.SignHash(accounts.Account{Address: m2}, posv.SigHash(header).Bytes())
 				header.Validator = sighash
 				return types.NewBlockWithHeader(header).WithBody(block.Transactions(), block.Uncles()), true, nil
 			}
@@ -584,24 +571,24 @@ func New(ctx *node.ServiceContext, config *Config, tomoXServ *tomox.TomoX, lendi
 		}
 
 		eth.txPool.IsSigner = func(address common.Address) bool {
-			currentHeader := eth.blockchain.CurrentHeader()
-			header := currentHeader
-			// Sometimes, the latest block hasn't been inserted to chain yet
-			// getSnapshot from parent block if it exists
-			parentHeader := eth.blockchain.GetHeader(currentHeader.ParentHash, currentHeader.Number.Uint64()-1)
-			if parentHeader != nil {
-				// not genesis block
-				header = parentHeader
-			}
-			snap, err := c.GetSnapshot(eth.blockchain, header)
-			if err != nil {
-				log.Error("Can't get snapshot with at ", "number", header.Number, "hash", header.Hash().Hex(), "err", err)
-				return false
-			}
-			if _, ok := snap.Signers[address]; ok {
-				return true
-			}
-			return false
+			//currentHeader := eth.blockchain.CurrentHeader()
+			//header := currentHeader
+			//// Sometimes, the latest block hasn't been inserted to chain yet
+			//// getSnapshot from parent block if it exists
+			//parentHeader := eth.blockchain.GetHeader(currentHeader.ParentHash, currentHeader.Number.Uint64()-1)
+			//if parentHeader != nil {
+			//	// not genesis block
+			//	header = parentHeader
+			//}
+			//snap, err := c.GetSnapshot(eth.blockchain, header)
+			//if err != nil {
+			//	log.Error("Can't get snapshot with at ", "number", header.Number, "hash", header.Hash().Hex(), "err", err)
+			//	return false
+			//}
+			//if _, ok := snap.Signers[address]; ok {
+			//	return true
+			//}
+			return true
 		}
 
 	}
@@ -730,36 +717,40 @@ func (s *Ethereum) ResetWithGenesisBlock(gb *types.Block) {
 	s.blockchain.ResetWithGenesisBlock(gb)
 }
 
-func (s *Ethereum) Etherbase() (eb common.Address, err error) {
+func (s *Ethereum) Etherbase() (eb map[common.Address]bool, err error) {
 	s.lock.RLock()
 	etherbase := s.etherbase
 	s.lock.RUnlock()
 
-	if etherbase != (common.Address{}) {
+	if len(etherbase) > 0 {
 		return etherbase, nil
 	}
 	if wallets := s.AccountManager().Wallets(); len(wallets) > 0 {
-		if accounts := wallets[0].Accounts(); len(accounts) > 0 {
-			etherbase := accounts[0].Address
-
-			s.lock.Lock()
-			s.etherbase = etherbase
-			s.lock.Unlock()
-
-			log.Info("Etherbase automatically configured", "address", etherbase)
-			return etherbase, nil
+		for _, wallet := range wallets {
+			for _, account := range wallet.Accounts() {
+				etherbase[account.Address] = true
+			}
 		}
 	}
-	return common.Address{}, fmt.Errorf("etherbase must be explicitly specified")
+	s.lock.Lock()
+	s.etherbase = etherbase
+	s.lock.Unlock()
+
+	log.Info("Etherbase automatically configured", "address", etherbase)
+	if len(etherbase) > 0 {
+		return etherbase, nil
+	} else {
+		return etherbase, fmt.Errorf("etherbase must be explicitly specified")
+	}
 }
 
 // set in js console via admin interface or wrapper from cli flags
 func (self *Ethereum) SetEtherbase(etherbase common.Address) {
 	self.lock.Lock()
-	self.etherbase = etherbase
+	self.etherbase[etherbase] = true
 	self.lock.Unlock()
 
-	self.miner.SetEtherbase(etherbase)
+	self.miner.SetEtherbase(self.etherbase)
 }
 
 // ValidateMasternode checks if node's address is in set of masternodes
@@ -775,7 +766,15 @@ func (s *Ethereum) ValidateMasternode() (bool, error) {
 		if err != nil {
 			return false, fmt.Errorf("Can't verify masternode permission: %v", err)
 		}
-		if _, authorized := snap.Signers[eb]; !authorized {
+		check := false
+		for addr, _ := range eb {
+			if _, authorized := snap.Signers[addr]; authorized {
+				//This miner doesn't belong to set of validators
+				check = true
+				break
+			}
+		}
+		if !check {
 			//This miner doesn't belong to set of validators
 			return false, nil
 		}
@@ -800,7 +799,7 @@ func (s *Ethereum) ValidateMasternodeTestnet() (bool, error) {
 		common.HexToAddress("0x8A97753311aeAFACfd76a68Cf2e2a9808d3e65E8"),
 	}
 	for _, m := range masternodes {
-		if m == eb {
+		if eb[m] {
 			return true, nil
 		}
 	}
@@ -814,12 +813,15 @@ func (s *Ethereum) StartStaking(local bool) error {
 		return fmt.Errorf("etherbase missing: %v", err)
 	}
 	if posv, ok := s.engine.(*posv.Posv); ok {
-		wallet, err := s.accountManager.Find(accounts.Account{Address: eb})
-		if wallet == nil || err != nil {
-			log.Error("Etherbase account unavailable locally", "err", err)
-			return fmt.Errorf("signer missing: %v", err)
+		for addr, _ := range eb {
+			wallet, err := s.accountManager.Find(accounts.Account{Address: addr})
+			if wallet == nil || err != nil {
+				log.Error("Etherbase account unavailable locally", "err", err)
+				return fmt.Errorf("signer missing: %v", err)
+			}
+			posv.Authorize(addr, wallet.SignHash)
+			log.Debug("Etherbase Start Staking", "addr", addr)
 		}
-		posv.Authorize(eb, wallet.SignHash)
 	}
 	if local {
 		// If local (CPU) mining is started, we can disable the transaction rejection

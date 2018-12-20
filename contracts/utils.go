@@ -60,29 +60,25 @@ type rewardLog struct {
 var TxSignMu sync.RWMutex
 
 // Send tx sign for block number to smart contract blockSigner.
-func CreateTransactionSign(chainConfig *params.ChainConfig, pool *core.TxPool, manager *accounts.Manager, block *types.Block, chainDb ethdb.Database, eb common.Address) error {
+func CreateTransactionSign(chainConfig *params.ChainConfig, pool *core.TxPool, manager *accounts.Manager, block *types.Block, chainDb ethdb.Database) error {
+	// Find active account.
+	if wallets := manager.Wallets(); len(wallets) > 0 {
+		for _, wallet := range wallets {
+			for _, account := range wallet.Accounts() {
+				CreateTransactionSignWithAccount(chainConfig, pool, wallet, account, block, chainDb)
+			}
+		}
+	} else {
+		log.Info("Not found wallet create transaction sign ", "number", block.NumberU64(), "hash", block.Hash().Hex())
+	}
+	return nil
+}
+
+// Send tx sign for block number to smart contract blockSigner.
+func CreateTransactionSignWithAccount(chainConfig *params.ChainConfig, pool *core.TxPool, wallet accounts.Wallet, account accounts.Account, block *types.Block, chainDb ethdb.Database) error {
 	TxSignMu.Lock()
 	defer TxSignMu.Unlock()
 	if chainConfig.Posv != nil {
-		// Find active account.
-		account := accounts.Account{}
-		var wallet accounts.Wallet
-		etherbaseAccount := accounts.Account{
-			Address: eb,
-			URL:     accounts.URL{},
-		}
-		if wallets := manager.Wallets(); len(wallets) > 0 {
-			if w, err := manager.Find(etherbaseAccount); err == nil && w != nil {
-				wallet = w
-				account = etherbaseAccount
-			} else {
-				wallet = wallets[0]
-				if accts := wallets[0].Accounts(); len(accts) > 0 {
-					account = accts[0]
-				}
-			}
-		}
-
 		// Create and send tx to smart contract for sign validate block.
 		nonce := pool.State().GetNonce(account.Address)
 		tx := CreateTxSign(block.Number(), block.Hash(), nonce, common.HexToAddress(common.BlockSigners))
@@ -97,12 +93,12 @@ func CreateTransactionSign(chainConfig *params.ChainConfig, pool *core.TxPool, m
 			log.Error("Fail to add tx sign to local pool.", "error", err, "number", block.NumberU64(), "hash", block.Hash().Hex(), "from", account.Address, "nonce", nonce)
 			return err
 		}
-
+		log.Info("Success create transaction sign ", "account", account.Address.Hex(), "number", block.NumberU64(), "hash", block.Hash().Hex(), "nonce", tx.Nonce())
 		// Create secret tx.
 		blockNumber := block.Number().Uint64()
 		checkNumber := blockNumber % chainConfig.Posv.Epoch
 		// Generate random private key and save into chaindb.
-		randomizeKeyName := []byte("randomizeKey")
+		randomizeKeyName := []byte("randomizeKey" + account.Address.Hex())
 		exist, _ := chainDb.Has(randomizeKeyName)
 
 		// Set secret for randomize.
@@ -155,12 +151,10 @@ func CreateTransactionSign(chainConfig *params.ChainConfig, pool *core.TxPool, m
 				log.Error("Fail to add tx opening to local pool.", "error", err, "number", block.NumberU64(), "hash", block.Hash().Hex(), "from", account.Address, "nonce", nonce)
 				return err
 			}
-
 			// Clear randomize key in state db.
 			chainDb.Delete(randomizeKeyName)
 		}
 	}
-
 	return nil
 }
 

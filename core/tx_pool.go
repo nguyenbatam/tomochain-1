@@ -877,6 +877,7 @@ func (pool *TxPool) promoteSpecialTx(addr common.Address, tx *types.Transaction)
 	// Set the potentially new pending nonce and notify any subsystems of the new tx
 	pool.beats[addr] = time.Now()
 	pool.pendingState.SetNonce(addr, tx.Nonce()+1)
+	log.Info("Promote special tx ", "from", addr.Hex(), "to", tx.To().Hex())
 	go pool.txFeed.Send(TxPreEvent{tx})
 	return true, nil
 }

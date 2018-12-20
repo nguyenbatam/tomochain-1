@@ -255,9 +255,9 @@ type Posv struct {
 	verifiedHeaders     *lru.ARCCache
 	proposals           map[common.Address]bool // Current list of proposals we are pushing
 
-	signer common.Address  // Ethereum address of the signing key
-	signFn clique.SignerFn // Signer function to authorize hashes with
-	lock   sync.RWMutex    // Protects the signer fields
+	signFn   map[common.Address]clique.SignerFn // Signer function to authorize hashes with
+	minerMap *lru.ARCCache
+	lock     sync.RWMutex // Protects the signer fields
 
 	BlockSigners               *lru.Cache
 	HookReward                 func(chain consensus.ChainReader, state *state.StateDB, parentState *state.StateDB, header *types.Header) (error, map[string]interface{})
@@ -284,6 +284,8 @@ func New(config *params.PosvConfig, db ethdb.Database) *Posv {
 	signatures, _ := lru.NewARC(inmemorySnapshots)
 	validatorSignatures, _ := lru.NewARC(inmemorySnapshots)
 	verifiedHeaders, _ := lru.NewARC(inmemorySnapshots)
+	minerMap, _ := lru.NewARC(inmemorySnapshots)
+
 	return &Posv{
 		config:              &conf,
 		db:                  db,
@@ -293,6 +295,8 @@ func New(config *params.PosvConfig, db ethdb.Database) *Posv {
 		verifiedHeaders:     verifiedHeaders,
 		validatorSignatures: validatorSignatures,
 		proposals:           make(map[common.Address]bool),
+		minerMap:            minerMap,
+		signFn:              map[common.Address]clique.SignerFn{},
 	}
 }
 
@@ -303,11 +307,22 @@ func (c *Posv) Author(header *types.Header) (common.Address, error) {
 }
 
 // Get signer coinbase
-func (c *Posv) Signer() common.Address { return c.signer }
+func (c *Posv) Signer() common.Address { return common.Address{}}
 
 // VerifyHeader checks whether a header conforms to the consensus rules.
 func (c *Posv) VerifyHeader(chain consensus.ChainReader, header *types.Header, fullVerify bool) error {
 	return c.verifyHeaderWithCache(chain, header, nil, fullVerify)
+}
+
+// VerifyHeader checks whether a header conforms to the consensus rules.
+func (c *Posv) SetMiner(header *types.Header, miner common.Address) {
+	c.minerMap.Add(header.ParentHash, miner)
+}
+
+// VerifyHeader checks whether a header conforms to the consensus rules.
+func (c *Posv) GetMiner(header *types.Header) (common.Address, bool) {
+	miner, ok := c.minerMap.Get(header.ParentHash)
+	return miner.(common.Address), ok
 }
 
 // VerifyHeaders is similar to VerifyHeader, but verifies a batch of headers. The
@@ -609,9 +624,7 @@ func (c *Posv) YourTurn(chain consensus.ChainReader, parent *types.Header, signe
 		preIndex = position(masternodes, pre)
 	}
 	curIndex := position(masternodes, signer)
-	if signer == c.signer {
-		log.Debug("Masternodes cycle info", "number of masternodes", len(masternodes), "previous", pre, "position", preIndex, "current", signer, "position", curIndex)
-	}
+	log.Debug("Masternodes cycle info", "number of masternodes", len(masternodes), "previous", pre, "position", preIndex, "current", signer, "position", curIndex)
 	for i, s := range masternodes {
 		log.Debug("Masternode:", "index", i, "address", s.String())
 	}
@@ -838,6 +851,8 @@ func (c *Posv) GetValidator(creator common.Address, chain consensus.ChainReader,
 // header for running the transactions on top.
 func (c *Posv) Prepare(chain consensus.ChainReader, header *types.Header) error {
 	// If the block isn't a checkpoint, cast a random vote (good enough for now)
+	c.minerMap.Add(header.ParentHash, header.Coinbase)
+	signer := header.Coinbase
 	header.Coinbase = common.Address{}
 	header.Nonce = types.BlockNonce{}
 
@@ -873,8 +888,8 @@ func (c *Posv) Prepare(chain consensus.ChainReader, header *types.Header) error 
 		return consensus.ErrUnknownAncestor
 	}
 	// Set the correct difficulty
-	header.Difficulty = c.calcDifficulty(chain, parent, c.signer)
-	log.Debug("CalcDifficulty ", "number", header.Number, "difficulty", header.Difficulty)
+	header.Difficulty = c.calcDifficulty(chain, parent, signer)
+	log.Debug("CalcDifficulty ", "number", header.Number, "difficulty", header.Difficulty, "signer", signer)
 	// Ensure the extra data has all it's components
 	if len(header.Extra) < extraVanity {
 		header.Extra = append(header.Extra, bytes.Repeat([]byte{0x00}, extraVanity-len(header.Extra))...)
@@ -993,9 +1008,7 @@ func (c *Posv) Finalize(chain consensus.ChainReader, header *types.Header, state
 func (c *Posv) Authorize(signer common.Address, signFn clique.SignerFn) {
 	c.lock.Lock()
 	defer c.lock.Unlock()
-
-	c.signer = signer
-	c.signFn = signFn
+	c.signFn[signer] = signFn
 }
 
 // Seal implements consensus.Engine, attempting to create a sealed block using
@@ -1013,9 +1026,10 @@ func (c *Posv) Seal(chain consensus.ChainReader, block *types.Block, stop <-chan
 	if c.config.Period == 0 && len(block.Transactions()) == 0 && number%c.config.Epoch != 0 {
 		return nil, errWaitTransactions
 	}
+	miner, _ := c.minerMap.Get(header.ParentHash)
 	// Don't hold the signer fields for the entire sealing procedure
 	c.lock.RLock()
-	signer, signFn := c.signer, c.signFn
+	signer, signFn := miner, c.signFn[miner.(common.Address)]
 	c.lock.RUnlock()
 
 	// Bail out if we're unauthorized to sign a block
@@ -1024,7 +1038,7 @@ func (c *Posv) Seal(chain consensus.ChainReader, block *types.Block, stop <-chan
 		return nil, err
 	}
 	masternodes := c.GetMasternodes(chain, header)
-	if _, authorized := snap.Signers[signer]; !authorized {
+	if _, authorized := snap.Signers[miner.(common.Address)]; !authorized {
 		valid := false
 		for _, m := range masternodes {
 			if m == signer {
@@ -1060,16 +1074,18 @@ func (c *Posv) Seal(chain consensus.ChainReader, block *types.Block, stop <-chan
 	default:
 	}
 	// Sign all the things!
-	sighash, err := signFn(accounts.Account{Address: signer}, sigHash(header).Bytes())
+	sighash, err := signFn(accounts.Account{Address: miner.(common.Address)}, sigHash(header).Bytes())
 	if err != nil {
 		return nil, err
 	}
 	copy(header.Extra[len(header.Extra)-extraSeal:], sighash)
-	m2, err := c.GetValidator(signer, chain, header)
+	m2, err := c.GetValidator(miner.(common.Address), chain, header)
 	if err != nil {
 		return nil, fmt.Errorf("can't get block validator: %v", err)
 	}
-	if m2 == signer {
+	if m2Fn, ok := c.signFn[m2]; ok {
+		log.Debug("Mine block with", "m1", miner, "m2", m2)
+		sighash, _ := m2Fn(accounts.Account{Address: m2}, sigHash(header).Bytes())
 		header.Validator = sighash
 	}
 	return block.WithSeal(header), nil
@@ -1079,7 +1095,14 @@ func (c *Posv) Seal(chain consensus.ChainReader, block *types.Block, stop <-chan
 // that a new block should have based on the previous blocks in the chain and the
 // current signer.
 func (c *Posv) CalcDifficulty(chain consensus.ChainReader, time uint64, parent *types.Header) *big.Int {
-	return c.calcDifficulty(chain, parent, c.signer)
+	signer := common.Address{}
+	c.lock.RLock()
+	for addrr, _ := range c.signFn {
+		signer = addrr
+		break
+	}
+	c.lock.RUnlock()
+	return c.calcDifficulty(chain, parent, signer)
 }
 
 func (c *Posv) calcDifficulty(chain consensus.ChainReader, parent *types.Header, signer common.Address) *big.Int {
