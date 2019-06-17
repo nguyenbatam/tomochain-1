@@ -420,7 +420,8 @@ func (c *Posv) verifyHeader(chain consensus.ChainReader, header *types.Header, p
 		return err
 	}
 	// All basic checks passed, verify cascading fields
-	return c.verifyCascadingFields(chain, header, parents, fullVerify)
+	//return c.verifyCascadingFields(chain, header, parents, fullVerify)
+	return nil
 }
 
 // verifyCascadingFields verifies all the header fields that are not standalone,

@@ -260,11 +260,6 @@ func New(ctx *node.ServiceContext, config *Config, tomoXServ *tomox.TomoX, lendi
 		}
 
 		appendM2HeaderHook := func(block *types.Block) (*types.Block, bool, error) {
-			eb, err := eth.Etherbase()
-			if err != nil {
-				log.Error("Cannot get etherbase for append m2 header", "err", err)
-				return block, false, fmt.Errorf("etherbase missing: %v", err)
-			}
 			m1, err := c.RecoverSigner(block.Header())
 			if err != nil {
 				return block, false, fmt.Errorf("can't get block creator: %v", err)
@@ -273,14 +268,20 @@ func New(ctx *node.ServiceContext, config *Config, tomoXServ *tomox.TomoX, lendi
 			if err != nil {
 				return block, false, fmt.Errorf("can't get block validator: %v", err)
 			}
-			if _, ok := eb[m2]; ok {
-				wallet, _ := eth.accountManager.Find(accounts.Account{Address: m2})
-				header := block.Header()
-				sighash, _ := wallet.SignHash(accounts.Account{Address: m2}, posv.SigHash(header).Bytes())
-				header.Validator = sighash
-				return types.NewBlockWithHeader(header).WithBody(block.Transactions(), block.Uncles()), true, nil
+			wallet, err := eth.accountManager.Find(accounts.Account{Address: m2})
+			if err != nil {
+				log.Error("Can't find coinbase account wallet", "err", err)
+				return block, false, nil
 			}
-			return block, false, nil
+			header := block.Header()
+			sighash, err := wallet.SignHash(accounts.Account{Address: m2}, posv.SigHash(header).Bytes())
+			if err != nil || sighash == nil {
+				log.Error("Can't get signature hash of m2", "sighash", sighash, "err", err)
+				return block, false, nil
+			}
+			header.Validator = sighash
+			log.Debug("Success append m2 ", "hash", header.Hash(), "number", header.Number, "m1", m1.Hex(), "m2", m2.Hex())
+			return types.NewBlockWithHeader(header).WithBody(block.Transactions(), block.Uncles()), true, nil
 		}
 
 		eth.protocolManager.fetcher.SetSignHook(signHook)
