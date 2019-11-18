@@ -1701,7 +1701,8 @@ func (bc *BlockChain) insertChain(chain types.Blocks) (int, []interface{}, []*ty
 			if (chain[i].NumberU64() % bc.chainConfig.Posv.Epoch) == (bc.chainConfig.Posv.Epoch - bc.chainConfig.Posv.Gap) {
 				err := bc.UpdateM1()
 				if err != nil {
-					log.Crit("Error when update masternodes set. Stopping node", "err", err)
+					log.Error("Error when update masternodes set. Stopping node", "err", err)
+					return i, events, coalescedLogs, err
 				}
 			}
 			if common.AutoSignBlock {
@@ -2051,7 +2052,7 @@ func (bc *BlockChain) insertBlock(block *types.Block) ([]interface{}, []*types.L
 			err := bc.UpdateM1()
 			if err != nil {
 				log.Error("Error when update masternodes set. Stopping node", "err", err)
-				os.Exit(1)
+				return events, coalescedLogs, err
 			}
 		}
 	}

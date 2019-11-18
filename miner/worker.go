@@ -26,7 +26,6 @@ import (
 
 	"github.com/tomochain/tomochain/common/math"
 	"math/big"
-	"os"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -390,7 +389,7 @@ func (self *worker) wait() {
 					err := self.chain.UpdateM1()
 					if err != nil {
 						log.Error("Error when update masternodes set. Stopping node", "err", err)
-						os.Exit(1)
+						return
 					}
 				}
 			}
