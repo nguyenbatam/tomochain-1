@@ -533,10 +533,15 @@ var (
 		Usage: "Minimum POW accepted",
 		Value: whisper.DefaultMinimumPoW,
 	}
-	TomoXDataDirFlag = DirectoryFlag{
-		Name:  "tomox.datadir",
-		Usage: "Data directory for the TomoX databases",
-		Value: DirectoryString{node.DefaultDataDir()},
+	TomoXTradingDataDirFlag = DirectoryFlag{
+		Name:  "tomox.tradingdatadir",
+		Usage: "Data directory for the Trading State databases",
+		Value: DirectoryString{filepath.Join(node.DefaultDataDir(), "trading")},
+	}
+	TomoXLendingDataDirFlag = DirectoryFlag{
+		Name:  "tomox.lendingdatadir",
+		Usage: "Data directory for the Lending State databases",
+		Value: DirectoryString{filepath.Join(node.DefaultDataDir(), "lending")},
 	}
 	TomoXDBEngineFlag = cli.StringFlag{
 		Name:  "tomox.dbengine",
@@ -1046,12 +1051,12 @@ func SetShhConfig(ctx *cli.Context, stack *node.Node, cfg *whisper.Config) {
 }
 
 func SetTomoXConfig(ctx *cli.Context, cfg *tomox.Config) {
-	if len(cfg.DataDir) == 0 {
-		if ctx.GlobalIsSet(TomoXDataDirFlag.Name) {
-			cfg.DataDir = ctx.GlobalString(TomoXDataDirFlag.Name)
-		} else {
-			cfg.DataDir = TomoXDataDirFlag.Value.String()
-		}
+
+	if ctx.GlobalIsSet(TomoXTradingDataDirFlag.Name) {
+		cfg.TradingDataDir = ctx.GlobalString(TomoXTradingDataDirFlag.Name)
+	}
+	if ctx.GlobalIsSet(TomoXLendingDataDirFlag.Name) {
+		cfg.LendingDataDir = ctx.GlobalString(TomoXLendingDataDirFlag.Name)
 	}
 	if ctx.GlobalIsSet(TomoXDBEngineFlag.Name) {
 		cfg.DBEngine = ctx.GlobalString(TomoXDBEngineFlag.Name)

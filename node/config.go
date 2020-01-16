@@ -59,7 +59,7 @@ type Config struct {
 	// in the devp2p node identifier.
 	Version string `toml:"-"`
 
-	// DataDir is the file system folder the node should use for any data storage
+	// TradingDataDir is the file system folder the node should use for any data storage
 	// requirements. The configured data directory will not be directly shared with
 	// registered services, instead those can use utility methods to create/access
 	// databases or flat files. This enables ephemeral nodes which can fully reside
@@ -74,7 +74,7 @@ type Config struct {
 	// current directory.
 	//
 	// If KeyStoreDir is empty, the default location is the "keystore" subdirectory of
-	// DataDir. If DataDir is unspecified and KeyStoreDir is empty, an ephemeral directory
+	// TradingDataDir. If TradingDataDir is unspecified and KeyStoreDir is empty, an ephemeral directory
 	// is created by New and destroyed when the node is stopped.
 	KeyStoreDir string `toml:",omitempty"`
 
@@ -284,10 +284,10 @@ func (c *Config) resolvePath(path string) string {
 			return oldpath
 		}
 	}
-	return filepath.Join(c.instanceDir(), path)
+	return filepath.Join(c.InstanceDir(), path)
 }
 
-func (c *Config) instanceDir() string {
+func (c *Config) InstanceDir() string {
 	if c.DataDir == "" {
 		return ""
 	}

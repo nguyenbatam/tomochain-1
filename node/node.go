@@ -601,7 +601,7 @@ func (n *Node) Service(service interface{}) error {
 	return ErrServiceUnknown
 }
 
-// DataDir retrieves the current datadir used by the protocol stack.
+// TradingDataDir retrieves the current datadir used by the protocol stack.
 // Deprecated: No files should be stored in this directory, use InstanceDir instead.
 func (n *Node) DataDir() string {
 	return n.config.DataDir
@@ -609,7 +609,7 @@ func (n *Node) DataDir() string {
 
 // InstanceDir retrieves the instance directory used by the protocol stack.
 func (n *Node) InstanceDir() string {
-	return n.config.instanceDir()
+	return n.config.InstanceDir()
 }
 
 // AccountManager retrieves the account manager used by the protocol stack.

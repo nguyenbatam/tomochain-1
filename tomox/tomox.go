@@ -37,7 +37,8 @@ var (
 )
 
 type Config struct {
-	DataDir        string `toml:",omitempty"`
+	TradingDataDir string `toml:",omitempty"`
+	LendingDataDir string `toml:",omitempty"`
 	DBEngine       string `toml:",omitempty"`
 	DBName         string `toml:",omitempty"`
 	ConnectionUrl  string `toml:",omitempty"`
@@ -46,7 +47,8 @@ type Config struct {
 
 // DefaultConfig represents (shocker!) the default configuration.
 var DefaultConfig = Config{
-	DataDir: "",
+	TradingDataDir: "",
+	LendingDataDir: "",
 }
 
 type TomoX struct {
@@ -76,10 +78,8 @@ func (tomox *TomoX) Stop() error {
 	return nil
 }
 
-func NewLDBEngine(cfg *Config) *tomoxDAO.BatchDatabase {
-	datadir := cfg.DataDir
-	batchDB := tomoxDAO.NewBatchDatabaseWithEncode(datadir, 0)
-	return batchDB
+func NewTradingLDBEngine(cfg *Config) *tomoxDAO.BatchDatabase {
+	return tomoxDAO.NewBatchDatabaseWithEncode(cfg.TradingDataDir, 0)
 }
 
 func NewMongoDBEngine(cfg *Config) *tomoxDAO.MongoDatabase {
@@ -103,7 +103,7 @@ func New(cfg *Config) *TomoX {
 	}
 
 	// default DBEngine: levelDB
-	tomoX.db = NewLDBEngine(cfg)
+	tomoX.db = NewTradingLDBEngine(cfg)
 	tomoX.sdkNode = false
 
 	if cfg.DBEngine == "mongodb" { // this is an add-on DBEngine for SDK nodes

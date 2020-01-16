@@ -24,6 +24,7 @@ import (
 	"io"
 	"math/big"
 	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"unicode"
@@ -199,8 +200,9 @@ func makeConfigNode(ctx *cli.Context) (*node.Node, tomoConfig) {
 	if ctx.GlobalIsSet(utils.EthStatsURLFlag.Name) {
 		cfg.Ethstats.URL = ctx.GlobalString(utils.EthStatsURLFlag.Name)
 	}
-
 	utils.SetShhConfig(ctx, stack, &cfg.Shh)
+	cfg.TomoX.TradingDataDir = filepath.Join(cfg.Node.InstanceDir(), "tradingdata")
+	cfg.TomoX.LendingDataDir = filepath.Join(cfg.Node.InstanceDir(), "lendingdata")
 	utils.SetTomoXConfig(ctx, &cfg.TomoX)
 	return stack, cfg
 }

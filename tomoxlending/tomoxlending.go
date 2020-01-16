@@ -57,7 +57,7 @@ func (l *Lending) Stop() error {
 	return nil
 }
 
-func New(tomox *tomox.TomoX) *Lending {
+func New(cfg *tomox.Config, tomox *tomox.TomoX) *Lending {
 	itemCache, _ := lru.New(defaultCacheLimit)
 	lendingTradeCache, _ := lru.New(defaultCacheLimit)
 	lending := &Lending{
@@ -66,12 +66,9 @@ func New(tomox *tomox.TomoX) *Lending {
 		lendingItemHistory:  itemCache,
 		lendingTradeHistory: lendingTradeCache,
 	}
-	lending.StateCache = lendingstate.NewDatabase(tomox.GetLevelDB())
+	lending.tomox = tomox
+	lending.StateCache = lendingstate.NewDatabase(tomoxDAO.NewBatchDatabaseWithEncode(cfg.LendingDataDir, 0))
 	return lending
-}
-
-func (l *Lending) GetLevelDB() tomoxDAO.TomoXDAO {
-	return l.tomox.GetLevelDB()
 }
 
 func (l *Lending) GetMongoDB() tomoxDAO.TomoXDAO {

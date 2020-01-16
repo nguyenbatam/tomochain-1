@@ -25,11 +25,6 @@ type BatchDatabase struct {
 	Debug      bool
 }
 
-// NewBatchDatabase use rlp as encoding
-func NewBatchDatabase(datadir string, cacheLimit int) *BatchDatabase {
-	return NewBatchDatabaseWithEncode(datadir, cacheLimit)
-}
-
 // batchdatabase is a fast cache db to retrieve in-mem object
 func NewBatchDatabaseWithEncode(datadir string, cacheLimit int) *BatchDatabase {
 	db, err := ethdb.NewLDBDatabase(datadir, 128, 1024)
