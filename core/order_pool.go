@@ -472,11 +472,11 @@ func (pool *OrderPool) validateOrder(tx *types.OrderTransaction) error {
 				return fmt.Errorf("tomox not found in order validation")
 			}
 			baseDecimal, err := tomoXServ.GetTokenDecimal(pool.chain, cloneStateDb, pool.chain.CurrentBlock().Header().Coinbase, tx.BaseToken())
-			if err != nil {
+			if err != nil || baseDecimal == nil || baseDecimal.Sign() == 0 {
 				return fmt.Errorf("validateOrder: failed to get baseDecimal. err: %v", err)
 			}
 			quoteDecimal, err := tomoXServ.GetTokenDecimal(pool.chain, cloneStateDb, pool.chain.CurrentBlock().Header().Coinbase, tx.QuoteToken())
-			if err != nil {
+			if err != nil || quoteDecimal == nil || quoteDecimal.Sign() == 0 {
 				return fmt.Errorf("validateOrder: failed to get quoteDecimal. err: %v", err)
 			}
 			if err := tradingstate.VerifyBalance(cloneStateDb, cloneTomoXStateDb, tx, baseDecimal, quoteDecimal); err != nil {

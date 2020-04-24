@@ -507,7 +507,7 @@ func (pool *LendingPool) validateBalance(cloneStateDb *state.StateDB, cloneLendi
 		return fmt.Errorf("tomox not found in order validation")
 	}
 	lendingTokenDecimal, err := tomoXServ.GetTokenDecimal(pool.chain, cloneStateDb, pool.chain.CurrentBlock().Header().Coinbase, tx.LendingToken())
-	if err != nil {
+	if err != nil || lendingTokenDecimal == nil || lendingTokenDecimal.Sign() == 0 {
 		return fmt.Errorf("validateOrder: failed to get lendingTokenDecimal. err: %v", err)
 	}
 	tradingStateDb, err := tomoXServ.GetTradingState(pool.chain.CurrentBlock())
@@ -522,7 +522,7 @@ func (pool *LendingPool) validateBalance(cloneStateDb *state.StateDB, cloneLendi
 	var lendTokenTOMOPrice, collateralPrice, collateralTokenDecimal *big.Int
 	if tx.Side() == lendingstate.Borrowing {
 		collateralTokenDecimal, err = tomoXServ.GetTokenDecimal(pool.chain, cloneStateDb, pool.chain.CurrentBlock().Header().Coinbase, tx.CollateralToken())
-		if err != nil {
+		if err != nil || collateralTokenDecimal == nil || collateralTokenDecimal.Sign() == 0 {
 			return fmt.Errorf("validateOrder: failed to get collateralTokenDecimal. err: %v", err)
 		}
 		lendTokenTOMOPrice, collateralPrice, err = lendingServ.GetCollateralPrices(pool.chain.CurrentHeader(), pool.chain, cloneStateDb, cloneTradingStateDb, tx.CollateralToken(), tx.LendingToken())

@@ -239,7 +239,7 @@ func (tomox *TomoX) processOrderList(coinbase common.Address, chain consensus.Ch
 			if quotePrice == nil || quotePrice.Sign() == 0 {
 				inversePrice := tradingStateDB.GetLastPrice(tradingstate.GetTradingOrderBookHash(common.HexToAddress(common.TomoNativeAddress), oldestOrder.QuoteToken))
 				quoteTokenDecimal, err := tomox.GetTokenDecimal(chain, statedb, coinbase, oldestOrder.QuoteToken)
-				if err != nil || quoteTokenDecimal.Sign() == 0 {
+				if err != nil || quoteTokenDecimal == nil || quoteTokenDecimal.Sign() == 0 {
 					return nil, nil, nil, fmt.Errorf("Fail to get tokenDecimal. Token: %v . Err: %v", oldestOrder.QuoteToken.String(), err)
 				}
 				log.Debug("TryGet inversePrice TOMO/QuoteToken", "inversePrice", inversePrice)
@@ -325,7 +325,7 @@ func (tomox *TomoX) processOrderList(coinbase common.Address, chain consensus.Ch
 			oldAveragePrice, oldTotalQuantity := tradingStateDB.GetMediumPriceAndTotalAmount(orderBook)
 
 			var newAveragePrice, newTotalQuantity *big.Int
-			if oldAveragePrice == nil || oldAveragePrice.Sign() <= 0 || oldTotalQuantity == nil || oldTotalQuantity.Sign() <= 0{
+			if oldAveragePrice == nil || oldAveragePrice.Sign() <= 0 || oldTotalQuantity == nil || oldTotalQuantity.Sign() <= 0 {
 				newAveragePrice = price
 				newTotalQuantity = tradedQuantity
 			} else {
@@ -357,11 +357,11 @@ func (tomox *TomoX) processOrderList(coinbase common.Address, chain consensus.Ch
 
 func (tomox *TomoX) getTradeQuantity(quotePrice *big.Int, coinbase common.Address, chain consensus.ChainContext, statedb *state.StateDB, takerOrder *tradingstate.OrderItem, makerOrder *tradingstate.OrderItem, quantityToTrade *big.Int) (*big.Int, bool, error) {
 	baseTokenDecimal, err := tomox.GetTokenDecimal(chain, statedb, coinbase, makerOrder.BaseToken)
-	if err != nil || baseTokenDecimal.Sign() == 0 {
+	if err != nil || baseTokenDecimal == nil || baseTokenDecimal.Sign() == 0 {
 		return tradingstate.Zero, false, fmt.Errorf("Fail to get tokenDecimal. Token: %v . Err: %v", makerOrder.BaseToken.String(), err)
 	}
 	quoteTokenDecimal, err := tomox.GetTokenDecimal(chain, statedb, coinbase, makerOrder.QuoteToken)
-	if err != nil || quoteTokenDecimal.Sign() == 0 {
+	if err != nil || quoteTokenDecimal == nil || quoteTokenDecimal.Sign() == 0 {
 		return tradingstate.Zero, false, fmt.Errorf("Fail to get tokenDecimal. Token: %v . Err: %v", makerOrder.QuoteToken.String(), err)
 	}
 	if makerOrder.QuoteToken.String() == common.TomoNativeAddress {
@@ -606,7 +606,7 @@ func (tomox *TomoX) ProcessCancelOrder(tradingStateDB *tradingstate.TradingState
 		return nil, true
 	}
 	baseTokenDecimal, err := tomox.GetTokenDecimal(chain, statedb, coinbase, order.BaseToken)
-	if err != nil || baseTokenDecimal.Sign() == 0 {
+	if err != nil || baseTokenDecimal == nil || baseTokenDecimal.Sign() == 0 {
 		log.Debug("Fail to get tokenDecimal ", "Token", order.BaseToken.String(), "err", err)
 		return err, false
 	}
