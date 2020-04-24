@@ -278,7 +278,7 @@ func GetAllLendingBooks(statedb *state.StateDB) (mapLendingBook map[common.Hash]
 	for _, baseToken := range baseTokens {
 		for _, term := range terms {
 			if (baseToken != common.Address{}) && (term > 0) {
-				mapLendingBook[GetLendingOrderBookHash(baseToken, term)] = true
+				mapLendingBook[GetLendingOrderBookHash(statedb,baseToken, term)] = true
 			}
 		}
 	}

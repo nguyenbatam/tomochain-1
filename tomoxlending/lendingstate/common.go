@@ -2,6 +2,7 @@ package lendingstate
 
 import (
 	"encoding/json"
+	"github.com/tomochain/tomochain/core/state"
 	"github.com/tomochain/tomochain/crypto"
 	"math/big"
 	"time"
@@ -11,7 +12,7 @@ import (
 
 var (
 	EmptyAddress = "0x0000000000000000000000000000000000000000"
-	EmptyRoot = common.HexToHash("56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421")
+	EmptyRoot    = common.HexToHash("56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421")
 )
 
 var EmptyHash = common.Hash{}
@@ -165,8 +166,13 @@ func Max(a, b *big.Int) *big.Int {
 	}
 }
 
-func GetLendingOrderBookHash(lendingToken common.Address, term uint64) common.Hash {
-	return crypto.Keccak256Hash(append(common.Uint64ToHash(term).Bytes(), lendingToken.Bytes()...))
+func GetLendingOrderBookHash(statedb *state.StateDB, orderSide string, lendingToken common.Address, collateralToken common.Address, term uint64) common.Hash {
+	if orderSide == Investing && common.EmptyHash(collateralToken.Hash()) {
+		return crypto.Keccak256Hash(append(common.Uint64ToHash(term).Bytes(), lendingToken.Bytes()...))
+	} else {
+
+		return crypto.Keccak256Hash(append(append(common.Uint64ToHash(term).Bytes(), lendingToken.Bytes()...), collateralToken.Bytes()...))
+	}
 }
 
 func EncodeTxLendingBatch(batch TxLendingBatch) ([]byte, error) {
@@ -214,7 +220,7 @@ func EncodeFinalizedResult(liquidatedTrades, autoRepayTrades, autoTopUpTrades, a
 	result := FinalizedResult{
 		Liquidated: liquidatedHashes,
 		AutoRepay:  autoRepayHashes,
-		AutoTopUp : autoTopUpHashes,
+		AutoTopUp:  autoTopUpHashes,
 		AutoRecall: autoRecallHashes,
 		Timestamp:  time.Now().UnixNano(),
 	}

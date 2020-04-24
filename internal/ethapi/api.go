@@ -2253,7 +2253,7 @@ func (s *PublicTomoXTransactionPoolAPI) GetInvestingTree(ctx context.Context, le
 	if err != nil {
 		return nil, err
 	}
-	result, err := lendingState.DumpInvestingTrie(lendingstate.GetLendingOrderBookHash(lendingToken, term))
+	result, err := lendingState.DumpInvestingTrie(lendingstate.GetLendingOrderBookHash(nil, lendingstate.Investing, lendingToken, common.Address{}, term))
 	if err != nil {
 		return nil, err
 	}
@@ -2273,7 +2273,7 @@ func (s *PublicTomoXTransactionPoolAPI) GetBorrowingTree(ctx context.Context, le
 	if err != nil {
 		return nil, err
 	}
-	result, err := lendingState.DumpBorrowingTrie(lendingstate.GetLendingOrderBookHash(lendingToken, term))
+	result, err := lendingState.DumpBorrowingTrie(lendingstate.GetLendingOrderBookHash(nil, lendingstate.Investing, lendingToken, common.Address{}, term))
 	if err != nil {
 		return nil, err
 	}
@@ -2293,7 +2293,7 @@ func (s *PublicTomoXTransactionPoolAPI) GetLendingOrderBookInfo(tx context.Conte
 	if err != nil {
 		return nil, err
 	}
-	result, err := lendingState.DumpOrderBookInfo(lendingstate.GetLendingOrderBookHash(lendingToken, term))
+	result, err := lendingState.DumpOrderBookInfo(lendingstate.GetLendingOrderBookHash(nil, lendingstate.Investing, lendingToken, common.Address{}, term))
 	if err != nil {
 		return nil, err
 	}
@@ -2313,7 +2313,7 @@ func (s *PublicTomoXTransactionPoolAPI) getLendingOrderTree(ctx context.Context,
 	if err != nil {
 		return nil, err
 	}
-	result, err := lendingState.DumpLendingOrderTrie(lendingstate.GetLendingOrderBookHash(lendingToken, term))
+	result, err := lendingState.DumpLendingOrderTrie(lendingstate.GetLendingOrderBookHash(nil, lendingstate.Investing, lendingToken, common.Address{}, term))
 	if err != nil {
 		return nil, err
 	}
@@ -2333,7 +2333,7 @@ func (s *PublicTomoXTransactionPoolAPI) GetLendingTradeTree(ctx context.Context,
 	if err != nil {
 		return nil, err
 	}
-	result, err := lendingState.DumpLendingTradeTrie(lendingstate.GetLendingOrderBookHash(lendingToken, term))
+	result, err := lendingState.DumpLendingTradeTrie(lendingstate.GetLendingOrderBookHash(nil, lendingstate.Investing, lendingToken, common.Address{}, term))
 	if err != nil {
 		return nil, err
 	}
@@ -2353,7 +2353,7 @@ func (s *PublicTomoXTransactionPoolAPI) GetLiquidationTimeTree(ctx context.Conte
 	if err != nil {
 		return nil, err
 	}
-	result, err := lendingState.DumpLiquidationTimeTrie(lendingstate.GetLendingOrderBookHash(lendingToken, term))
+	result, err := lendingState.DumpLiquidationTimeTrie(lendingstate.GetLendingOrderBookHash(nil, lendingstate.Investing, lendingToken, common.Address{}, term))
 	if err != nil {
 		return nil, err
 	}
@@ -2391,7 +2391,7 @@ func (s *PublicTomoXTransactionPoolAPI) GetBestInvesting(ctx context.Context, le
 	if err != nil {
 		return result, err
 	}
-	result.Interest, result.Volume = lendingState.GetBestInvestingRate(lendingstate.GetLendingOrderBookHash(lendingToken, term))
+	result.Interest, result.Volume = lendingState.GetBestInvestingRate(lendingstate.GetLendingOrderBookHash(nil, lendingstate.Investing, lendingToken, common.Address{}, term))
 	return result, nil
 }
 
@@ -2409,7 +2409,7 @@ func (s *PublicTomoXTransactionPoolAPI) GetBestBorrowing(ctx context.Context, le
 	if err != nil {
 		return result, err
 	}
-	result.Interest, result.Volume = lendingState.GetBestBorrowRate(lendingstate.GetLendingOrderBookHash(lendingToken, term))
+	result.Interest, result.Volume = lendingState.GetBestBorrowRate(lendingstate.GetLendingOrderBookHash(nil, lendingstate.Investing, lendingToken, common.Address{}, term))
 	return result, nil
 }
 
@@ -2466,7 +2466,7 @@ func (s *PublicTomoXTransactionPoolAPI) GetInvests(ctx context.Context, lendingT
 	if err != nil {
 		return nil, err
 	}
-	result, err := lendingState.GetInvestings(lendingstate.GetLendingOrderBookHash(lendingToken, term))
+	result, err := lendingState.GetInvestings(lendingstate.GetLendingOrderBookHash(nil, lendingstate.Investing, lendingToken, common.Address{}, term))
 	if err != nil {
 		return nil, err
 	}
@@ -2486,7 +2486,7 @@ func (s *PublicTomoXTransactionPoolAPI) GetBorrows(ctx context.Context, lendingT
 	if err != nil {
 		return nil, err
 	}
-	result, err := lendingState.GetBorrowings(lendingstate.GetLendingOrderBookHash(lendingToken, term))
+	result, err := lendingState.GetBorrowings(lendingstate.GetLendingOrderBookHash(nil, lendingstate.Investing, lendingToken, common.Address{}, term))
 	if err != nil {
 		return nil, err
 	}

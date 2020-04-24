@@ -160,7 +160,7 @@ func (v *BlockValidator) ValidateLendingOrder(statedb *state.StateDB, lendingSta
 
 		log.Debug("process lending tx", "lendingItem", lendingstate.ToJSON(l))
 		// process Matching Engine
-		newTrades, newRejectedOrders, err := lendingService.ApplyOrder(header, coinbase, v.bc, statedb, lendingStateDb, tomoxStatedb, lendingstate.GetLendingOrderBookHash(l.LendingToken, l.Term), l)
+		newTrades, newRejectedOrders, err := lendingService.ApplyOrder(header, coinbase, v.bc, statedb, lendingStateDb, tomoxStatedb, lendingstate.GetLendingOrderBookHash(statedb,l.Side,l.LendingToken,l.CollateralToken, l.Term), l)
 		if err != nil {
 			return err
 		}

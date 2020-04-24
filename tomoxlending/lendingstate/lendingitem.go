@@ -243,7 +243,7 @@ func (l *LendingItem) VerifyLendingSide() error {
 }
 
 func (l *LendingItem) VerifyCollateral(state *state.StateDB) error {
-	if l.CollateralToken.String() ==  EmptyAddress || l.CollateralToken.String() == l.LendingToken.String(){
+	if l.CollateralToken.String() == EmptyAddress || l.CollateralToken.String() == l.LendingToken.String() {
 		return fmt.Errorf("invalid collateral %s", l.CollateralToken.Hex())
 	}
 	validCollateral := false
@@ -353,7 +353,7 @@ func VerifyBalance(statedb *state.StateDB, lendingStateDb *LendingStateDB,
 	borrowingFeeRate := GetFee(statedb, relayer)
 	switch orderType {
 	case TopUp:
-		lendingBook := GetLendingOrderBookHash(lendingToken, term)
+		lendingBook := GetLendingOrderBookHash(statedb, side, lendingToken, collateralToken, term)
 		lendingTrade := lendingStateDb.GetLendingTrade(lendingBook, common.Uint64ToHash(lendingTradeId))
 		if lendingTrade == EmptyLendingTrade {
 			return fmt.Errorf("VerifyBalance: process deposit for emptyLendingTrade is not allowed. lendingTradeId: %v", lendingTradeId)
@@ -368,7 +368,7 @@ func VerifyBalance(statedb *state.StateDB, lendingStateDb *LendingStateDB,
 				lendingTradeId, lendingTrade.CollateralToken.Hex(), quantity.String(), tokenBalance.String())
 		}
 	case Repay:
-		lendingBook := GetLendingOrderBookHash(lendingToken, term)
+		lendingBook := GetLendingOrderBookHash(statedb, side, lendingToken, collateralToken, term)
 		lendingTrade := lendingStateDb.GetLendingTrade(lendingBook, common.Uint64ToHash(lendingTradeId))
 		if lendingTrade == EmptyLendingTrade {
 			return fmt.Errorf("VerifyBalance: process payment for emptyLendingTrade is not allowed. lendingTradeId: %v", lendingTradeId)
@@ -411,7 +411,7 @@ func VerifyBalance(statedb *state.StateDB, lendingStateDb *LendingStateDB,
 			case LendingStatusCancelled:
 				// in case of cancel, investor need to pay cancel fee in lendingToken
 				// make sure actualBalance >= cancel fee
-				lendingBook := GetLendingOrderBookHash(lendingToken, term)
+				lendingBook := GetLendingOrderBookHash(statedb, side, lendingToken, collateralToken, term)
 				item := lendingStateDb.GetLendingOrder(lendingBook, common.BigToHash(new(big.Int).SetUint64(lendingId)))
 				cancelFee := big.NewInt(0)
 				cancelFee = new(big.Int).Mul(item.Quantity, borrowingFeeRate)
@@ -441,7 +441,7 @@ func VerifyBalance(statedb *state.StateDB, lendingStateDb *LendingStateDB,
 						userAddress.Hex(), collateralToken.Hex(), expectedBalance.String(), actualBalance.String())
 				}
 			case LendingStatusCancelled:
-				lendingBook := GetLendingOrderBookHash(lendingToken, term)
+				lendingBook := GetLendingOrderBookHash(statedb, side, lendingToken, collateralToken, term)
 				item := lendingStateDb.GetLendingOrder(lendingBook, common.BigToHash(new(big.Int).SetUint64(lendingId)))
 				cancelFee := big.NewInt(0)
 				// Fee ==  quantityToLend/base lend token decimal *price*borrowFee/LendingCancelFee

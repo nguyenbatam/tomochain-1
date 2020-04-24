@@ -198,7 +198,7 @@ func TestVerifyBalance(t *testing.T) {
 		LendingId:       uint64(1),
 		ExtraData:       "",
 	}
-	lendingstatedb.InsertLendingItem(GetLendingOrderBookHash(lendingItem1.LendingToken, lendingItem1.Term), common.BigToHash(new(big.Int).SetUint64(lendingItem1.LendingId)), lendingItem1)
+	lendingstatedb.InsertLendingItem(GetLendingOrderBookHash(statedb, lendingItem1.Side, lendingItem1.LendingToken, lendingItem1.CollateralToken, lendingItem1.Term), common.BigToHash(new(big.Int).SetUint64(lendingItem1.LendingId)), lendingItem1)
 
 	// insert lendingItem2 for testing cancel (side borrowing)
 	lendingItem2 := LendingItem{
@@ -222,11 +222,11 @@ func TestVerifyBalance(t *testing.T) {
 		LendingId:       uint64(2),
 		ExtraData:       "",
 	}
-	lendingstatedb.InsertLendingItem(GetLendingOrderBookHash(lendingItem2.LendingToken, lendingItem2.Term), common.BigToHash(new(big.Int).SetUint64(lendingItem2.LendingId)), lendingItem2)
+	lendingstatedb.InsertLendingItem(GetLendingOrderBookHash(statedb, lendingItem2.Side, lendingItem2.LendingToken, lendingItem2.CollateralToken, lendingItem2.Term), common.BigToHash(new(big.Int).SetUint64(lendingItem2.LendingId)), lendingItem2)
 
 	// insert lendingTrade for testing deposit (side: borrowing)
 	lendingstatedb.InsertTradingItem(
-		GetLendingOrderBookHash(lendingItem2.LendingToken, lendingItem2.Term),
+		GetLendingOrderBookHash(statedb, lendingItem2.Side, lendingItem2.LendingToken, lendingItem2.CollateralToken, lendingItem2.Term),
 		uint64(1),
 		LendingTrade{
 			TradeId:         uint64(1),
@@ -240,7 +240,7 @@ func TestVerifyBalance(t *testing.T) {
 
 	// make a big lendingTrade to test case: not enough balance to process payment
 	lendingstatedb.InsertTradingItem(
-		GetLendingOrderBookHash(lendingItem2.LendingToken, lendingItem2.Term),
+		GetLendingOrderBookHash(statedb, lendingItem2.Side, lendingItem2.LendingToken, lendingItem2.CollateralToken, lendingItem2.Term),
 		uint64(2),
 		LendingTrade{
 			TradeId:         uint64(2),

@@ -431,7 +431,7 @@ func (pool *LendingPool) validateNewLending(cloneStateDb *state.StateDB, cloneLe
 		return ErrInvalidLendingType
 	}
 	if tx.Side() == lendingstate.Borrowing {
-		if tx.CollateralToken().String() ==  lendingstate.EmptyAddress || tx.CollateralToken().String() == tx.LendingToken().String(){
+		if tx.CollateralToken().String() == lendingstate.EmptyAddress || tx.CollateralToken().String() == tx.LendingToken().String() {
 			return ErrInvalidLendingCollateral
 		}
 		validCollateral := false
@@ -454,11 +454,11 @@ func (pool *LendingPool) validateNewLending(cloneStateDb *state.StateDB, cloneLe
 	return nil
 }
 
-func (pool *LendingPool) validateCancelledLending(cloneLendingStateDb *lendingstate.LendingStateDB, tx *types.LendingTransaction) error {
+func (pool *LendingPool) validateCancelledLending(cloneStateDb *state.StateDB, cloneLendingStateDb *lendingstate.LendingStateDB, tx *types.LendingTransaction) error {
 	if tx.LendingId() == 0 {
 		return ErrInvalidCancelledLending
 	}
-	item := cloneLendingStateDb.GetLendingOrder(lendingstate.GetLendingOrderBookHash(tx.LendingToken(), tx.Term()), common.Uint64ToHash(tx.LendingId()))
+	item := cloneLendingStateDb.GetLendingOrder(lendingstate.GetLendingOrderBookHash(cloneStateDb, tx.Side(), tx.LendingToken(), tx.CollateralToken(), tx.Term()), common.Uint64ToHash(tx.LendingId()))
 	if item == lendingstate.EmptyLendingOrder {
 		log.Debug("LendingOrder not found ", "LendingId", tx.LendingId(), "LendToken", tx.LendingToken().Hex(), "CollateralToken", tx.CollateralToken().Hex(), "Term", tx.Term())
 		return ErrInvalidCancelledLending
@@ -473,7 +473,7 @@ func (pool *LendingPool) validateRepayLending(cloneStateDb *state.StateDB, clone
 	if tx.LendingTradeId() == 0 {
 		return ErrInvalidLendingTradeID
 	}
-	lendingBook := lendingstate.GetLendingOrderBookHash(tx.LendingToken(), tx.Term())
+	lendingBook := lendingstate.GetLendingOrderBookHash(cloneStateDb, tx.Side(), tx.LendingToken(), tx.CollateralToken(), tx.Term())
 	lendingTrade := cloneLendingStateDb.GetLendingTrade(lendingBook, common.Uint64ToHash(tx.LendingTradeId()))
 	if lendingTrade == lendingstate.EmptyLendingTrade {
 		return ErrInvalidLendingTradeID
@@ -496,7 +496,7 @@ func (pool *LendingPool) validateTopupLending(cloneStateDb *state.StateDB, clone
 	if tx.Quantity() == nil || tx.Quantity().Sign() <= 0 {
 		return ErrInvalidLendingQuantity
 	}
-	lendingBook := lendingstate.GetLendingOrderBookHash(tx.LendingToken(), tx.Term())
+	lendingBook := lendingstate.GetLendingOrderBookHash(cloneStateDb, tx.Side(), tx.LendingToken(), tx.CollateralToken(), tx.Term())
 	lendingTrade := cloneLendingStateDb.GetLendingTrade(lendingBook, common.Uint64ToHash(tx.LendingTradeId()))
 	if lendingTrade == lendingstate.EmptyLendingTrade {
 		return ErrInvalidLendingTradeID
@@ -605,7 +605,7 @@ func (pool *LendingPool) validateLending(tx *types.LendingTransaction) error {
 		return pool.validateNewLending(cloneStateDb, cloneLendingStateDb, tx)
 	}
 	if tx.IsCancelledLending() {
-		return pool.validateCancelledLending(cloneLendingStateDb, tx)
+		return pool.validateCancelledLending(cloneStateDb,cloneLendingStateDb, tx)
 	}
 	if tx.IsTopupLending() {
 		return pool.validateTopupLending(cloneStateDb, cloneLendingStateDb, tx)
