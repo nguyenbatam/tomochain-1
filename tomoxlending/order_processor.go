@@ -798,14 +798,17 @@ func (l *Lending) LiquidationTrade(lendingStateDB *lendingstate.LendingStateDB, 
 	err := lendingStateDB.RemoveLiquidationTime(lendingBook, lendingTradeId, lendingTrade.LiquidationTime)
 	if err != nil {
 		log.Debug("LiquidationTrade RemoveLiquidationTime", "err", err)
+		return nil,err
 	}
 	err = tradingstateDB.RemoveLiquidationPrice(tradingstate.GetTradingOrderBookHash(lendingTrade.CollateralToken, lendingTrade.LendingToken), lendingTrade.LiquidationPrice, lendingBook, lendingTradeId)
 	if err != nil {
 		log.Debug("LiquidationTrade RemoveLiquidationPrice", "err", err)
+		return nil,err
 	}
 	err = lendingStateDB.CancelLendingTrade(lendingBook, lendingTradeId)
 	if err != nil {
 		log.Debug("LiquidationTrade CancelLendingTrade", "err", err)
+		return nil,err
 	}
 	return &lendingTrade, nil
 }
@@ -1036,14 +1039,17 @@ func (l *Lending) ProcessRepayLendingTrade(time uint64, lendingStateDB *lendings
 		err = lendingStateDB.RemoveLiquidationTime(lendingBook, lendingTradeId, lendingTrade.LiquidationTime)
 		if err != nil {
 			log.Debug("ProcessRepay RemoveLiquidationTime", "err", err, "lendingHash", lendingTrade.Hash, "trade", lendingstate.ToJSON(lendingTrade))
+			return nil,err
 		}
 		err = tradingstateDB.RemoveLiquidationPrice(tradingstate.GetTradingOrderBookHash(lendingTrade.CollateralToken, lendingTrade.LendingToken), lendingTrade.LiquidationPrice, lendingBook, lendingTradeId)
 		if err != nil {
 			log.Debug("ProcessRepay RemoveLiquidationPrice", "err", err)
+			return nil,err
 		}
 		lendingStateDB.CancelLendingTrade(lendingBook, lendingTradeId)
 		if err != nil {
 			log.Debug("ProcessRepay CancelLendingTrade", "err", err)
+			return nil,err
 		}
 		lendingTrade.Status = lendingstate.TradeStatusClosed
 	}
