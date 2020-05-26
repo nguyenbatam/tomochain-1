@@ -645,6 +645,7 @@ func (self *worker) commitNewWork() {
 		updatedTrades                                                        map[common.Hash]*lendingstate.LendingTrade
 		liquidatedTrades, autoRepayTrades, autoTopUpTrades, autoRecallTrades []*lendingstate.LendingTrade
 		lendingFinalizedTradeTransaction                                     *types.Transaction
+		wallet                                                               accounts.Wallet
 	)
 	feeCapacity := state.GetTRC21FeeCapacityFromStateWithCache(parent.Root(), work.state)
 	if self.config.Posv != nil && header.Number.Uint64()%self.config.Posv.Epoch != 0 {
@@ -656,7 +657,7 @@ func (self *worker) commitNewWork() {
 		txs, specialTxs = types.NewTransactionsByPriceAndNonce(self.current.signer, pending, signers, feeCapacity)
 	}
 	if atomic.LoadInt32(&self.mining) == 1 {
-		wallet, err := self.eth.AccountManager().Find(accounts.Account{Address: miner})
+		wallet, err = self.eth.AccountManager().Find(accounts.Account{Address: miner})
 		if err != nil {
 			log.Warn("Can't find coinbase account wallet", "coinbase", miner, "err", err)
 			return
@@ -787,7 +788,7 @@ func (self *worker) commitNewWork() {
 		}
 		specialTxs = append(specialTxs, txStateRoot)
 	}
-	work.commitTransactions(self.mux, feeCapacity, txs, specialTxs, self.chain, miner)
+	work.commitTransactions(self.mux, feeCapacity, txs, specialTxs, self.chain, miner, wallet, header)
 	// compute uncles for the new block.
 	var (
 		uncles    []*types.Header
@@ -840,7 +841,7 @@ func (self *worker) commitUncle(work *Work, uncle *types.Header) error {
 	return nil
 }
 
-func (env *Work) commitTransactions(mux *event.TypeMux, balanceFee map[common.Address]*big.Int, txs *types.TransactionsByPriceAndNonce, specialTxs types.Transactions, bc *core.BlockChain, coinbase common.Address) {
+func (env *Work) commitTransactions(mux *event.TypeMux, balanceFee map[common.Address]*big.Int, txs *types.TransactionsByPriceAndNonce, specialTxs types.Transactions, bc *core.BlockChain, miner common.Address, wallet accounts.Wallet, header *types.Header) {
 	gp := new(core.GasPool).AddGas(env.header.GasLimit)
 	balanceUpdated := map[common.Address]*big.Int{}
 	totalFeeUsed := big.NewInt(0)
@@ -915,7 +916,7 @@ func (env *Work) commitTransactions(mux *event.TypeMux, balanceFee map[common.Ad
 			log.Trace("Skipping account with special transaction invalid nonce", "sender", from, "nonce", nonce, "tx nonce ", tx.Nonce(), "to", tx.To())
 			continue
 		}
-		err, logs, tokenFeeUsed, gas := env.commitTransaction(balanceFee, tx, bc, coinbase, gp)
+		err, logs, tokenFeeUsed, gas := env.commitTransaction(balanceFee, tx, bc, miner, gp)
 		switch err {
 		case core.ErrNonceTooLow:
 			// New head notification data race between the transaction pool and miner, shift
@@ -1023,7 +1024,7 @@ func (env *Work) commitTransactions(mux *event.TypeMux, balanceFee map[common.Ad
 			txs.Pop()
 			continue
 		}
-		err, logs, tokenFeeUsed, gas := env.commitTransaction(balanceFee, tx, bc, coinbase, gp)
+		err, logs, tokenFeeUsed, gas := env.commitTransaction(balanceFee, tx, bc, miner, gp)
 		switch err {
 		case core.ErrGasLimitReached:
 			// Pop the current out-of-gas transaction without shifting in the next from the account
@@ -1063,6 +1064,25 @@ func (env *Work) commitTransactions(mux *event.TypeMux, balanceFee map[common.Ad
 		}
 	}
 	state.UpdateTRC21Fee(env.state, balanceUpdated, totalFeeUsed)
+	missBlocks := env.findBlockNotSign(miner, header, specialTxs, bc)
+	for hash, number := range missBlocks {
+		nonce := env.state.GetNonce(miner)
+		tx := contracts.CreateTxSign(new(big.Int).SetUint64(number), hash, nonce, common.HexToAddress(common.BlockSigners))
+		txSigned, err := wallet.SignTx(accounts.Account{Address: miner}, tx, bc.Config().ChainId)
+		if err != nil {
+			log.Error("Fail to create tx sign miss block", "miner", miner.Hex(), "error", err)
+			continue
+		}
+		env.state.Prepare(txSigned.Hash(), common.Hash{}, env.tcount)
+		err, logs, _, _ := env.commitTransaction(balanceFee, txSigned, bc, miner, gp)
+		if err != nil {
+			log.Error("Fail to commit transaction sign miss block", "miner", miner.Hex(), "error", err)
+			continue
+		}
+		log.Debug("Add success a miss sign", "hash", hash.Hex(), "number", number)
+		coalescedLogs = append(coalescedLogs, logs...)
+		env.tcount++
+	}
 	if len(coalescedLogs) > 0 || env.tcount > 0 {
 		// make a copy, the state caches the logs and these logs get "upgraded" from pending to mined
 		// logs by filling in the block hash when the block was mined by the local miner. This can
@@ -1083,6 +1103,56 @@ func (env *Work) commitTransactions(mux *event.TypeMux, balanceFee map[common.Ad
 	}
 }
 
+func (env *Work) findBlockNotSign(miner common.Address, header *types.Header, specialTxs types.Transactions, chain *core.BlockChain) map[common.Hash]uint64 {
+	c := chain.Engine().(*posv.Posv)
+	data := make(map[common.Hash]bool)
+	signBlock := map[common.Hash]uint64{}
+	for _, tx := range specialTxs {
+		if tx.IsSigningTransaction() {
+			blkHash := common.BytesToHash(tx.Data()[len(tx.Data())-32:])
+			from := *tx.From()
+			if from == miner {
+				data[blkHash] = true
+			}
+		}
+	}
+	checkHeader := chain.GetHeader(header.ParentHash, header.Number.Uint64()-1)
+	for i := 0; i < 300; i++ {
+		signData, ok := c.BlockSigners.Get(checkHeader.Hash())
+		signTxs := []*types.Transaction{}
+		if checkHeader.Number.Uint64()%common.MergeSignRange == 0 {
+			signBlock[checkHeader.Hash()] = checkHeader.Number.Uint64()
+		}
+		if !ok {
+			log.Debug("Failed get from cached", "hash", checkHeader.Hash().String(), "number", checkHeader.Number)
+			body := chain.GetBody(checkHeader.Hash())
+			for _, tx := range body.Transactions {
+				if tx.IsSigningTransaction() {
+					signTxs = append(signTxs, tx)
+				}
+			}
+		} else {
+			signTxs = signData.([]*types.Transaction)
+		}
+		for _, tx := range signTxs {
+			blkHash := common.BytesToHash(tx.Data()[len(tx.Data())-32:])
+			from := *tx.From()
+			if from == miner {
+				data[blkHash] = true
+			}
+		}
+		checkHeader = chain.GetHeader(checkHeader.ParentHash, checkHeader.Number.Uint64()-1)
+	}
+	log.Debug("Check number sign", "miner", miner.Hex(), "signBlock", len(signBlock))
+	missBlock := map[common.Hash]uint64{}
+	for hash, number := range signBlock {
+		if !data[hash] {
+			missBlock[hash] = number
+			log.Debug("find block miss sign", "miner", miner.Hex(), "hash", hash.Hex(), "number", number)
+		}
+	}
+	return missBlock
+}
 func (env *Work) commitTransaction(balanceFee map[common.Address]*big.Int, tx *types.Transaction, bc *core.BlockChain, coinbase common.Address, gp *core.GasPool) (error, []*types.Log, bool, uint64) {
 	snap := env.state.Snapshot()
 
