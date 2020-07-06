@@ -106,7 +106,22 @@ func (db *cachingDB) OpenTrie(root common.Hash) (Trie, error) {
 	}
 	return cachedTrie{tr, db}, nil
 }
+// OpenTrie opens the main account trie.
+func (db *cachingDB) OpenEmptyTrie(root common.Hash) (Trie, error) {
+	db.mu.Lock()
+	defer db.mu.Unlock()
 
+	for i := len(db.pastTries) - 1; i >= 0; i-- {
+		if db.pastTries[i].Hash() == root {
+			return cachedTrie{db.pastTries[i].Copy(), db}, nil
+		}
+	}
+	tr, err := trie.NewEmptyTSecure(root, db.db, MaxTrieCacheGen)
+	if err != nil {
+		return nil, err
+	}
+	return cachedTrie{tr, db}, nil
+}
 func (db *cachingDB) pushTrie(t *trie.SecureTrie) {
 	db.mu.Lock()
 	defer db.mu.Unlock()

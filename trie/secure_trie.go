@@ -62,6 +62,17 @@ func NewSecure(root common.Hash, db *Database, cachelimit uint16) (*SecureTrie, 
 	trie.SetCacheLimit(cachelimit)
 	return &SecureTrie{trie: *trie}, nil
 }
+func NewEmptyTSecure(root common.Hash, db *Database, cachelimit uint16) (*SecureTrie, error) {
+	if db == nil {
+		panic("trie.NewSecure called without a database")
+	}
+	trie, err := NewEmptyTrie(root, db)
+	if err != nil {
+		return nil, err
+	}
+	trie.SetCacheLimit(cachelimit)
+	return &SecureTrie{trie: *trie}, nil
+}
 
 // Get returns the value for key stored in the trie.
 // The value bytes must not be modified by the caller.

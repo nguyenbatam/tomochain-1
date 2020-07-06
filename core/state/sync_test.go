@@ -37,7 +37,7 @@ type testAccount struct {
 
 // makeTestState create a sample test state to test node-wise reconstruction.
 func makeTestState() (Database, common.Hash, []*testAccount) {
-	// Create an empty state
+	// Create an Empty state
 	diskdb, _ := ethdb.NewMemDatabase()
 	db := NewDatabase(diskdb)
 	state, _ := New(common.Hash{}, db)
@@ -122,12 +122,12 @@ func checkStateConsistency(db ethdb.Database, root common.Hash) error {
 	return it.Error
 }
 
-// Tests that an empty state is not scheduled for syncing.
+// Tests that an Empty state is not scheduled for syncing.
 func TestEmptyStateSync(t *testing.T) {
 	empty := common.HexToHash("56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421")
 	db, _ := ethdb.NewMemDatabase()
 	if req := NewStateSync(empty, db).Missing(1); len(req) != 0 {
-		t.Errorf("content requested for empty state: %v", req)
+		t.Errorf("content requested for Empty state: %v", req)
 	}
 }
 

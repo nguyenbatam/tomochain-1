@@ -90,8 +90,8 @@ type stateObject struct {
 	onDirty   func(addr common.Address) // Callback method to mark a state object newly dirty
 }
 
-// empty returns whether the account is considered empty.
-func (s *stateObject) empty() bool {
+// Empty returns whether the account is considered Empty.
+func (s *stateObject) Empty() bool {
 	return s.data.Nonce == 0 && s.data.Balance.Sign() == 0 && bytes.Equal(s.data.CodeHash, emptyCodeHash)
 }
 
@@ -193,6 +193,25 @@ func (self *stateObject) GetState(db Database, key common.Hash) common.Hash {
 	return value
 }
 
+// GetState returns a value in account storage.
+func (self *stateObject) GetStateNotCache(db Database, key common.Hash) common.Hash {
+	value := common.Hash{}
+	// Load from DB in case it is missing.
+	enc, err := self.getTrie(db).TryGet(key[:])
+	if err != nil {
+		self.setError(err)
+		return common.Hash{}
+	}
+	if len(enc) > 0 {
+		_, content, _, err := rlp.Split(enc)
+		if err != nil {
+			self.setError(err)
+		}
+		value.SetBytes(content)
+	}
+	return value
+}
+
 // SetState updates a value in account storage.
 func (self *stateObject) SetState(db Database, key, value common.Hash) {
 	self.db.journal = append(self.db.journal, storageChange{
@@ -255,7 +274,7 @@ func (c *stateObject) AddBalance(amount *big.Int) {
 	// EIP158: We must check emptiness for the objects such that the account
 	// clearing (0,0,0 objects) can take effect.
 	if amount.Sign() == 0 {
-		if c.empty() {
+		if c.Empty() {
 			c.touch()
 		}
 

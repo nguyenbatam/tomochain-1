@@ -100,7 +100,7 @@ func (s *StateSuite) TestNull(c *checker.C) {
 	s.state.Commit(false)
 	value = s.state.GetState(address, common.Hash{})
 	if !common.EmptyHash(value) {
-		c.Errorf("expected empty hash. got %x", value)
+		c.Errorf("expected Empty hash. got %x", value)
 	}
 }
 
@@ -146,7 +146,7 @@ func TestSnapshot2(t *testing.T) {
 	state.SetState(stateobjaddr0, storageaddr, data0)
 	state.SetState(stateobjaddr1, storageaddr, data1)
 
-	// db, trie are already non-empty values
+	// db, trie are already non-Empty values
 	so0 := state.getStateObject(stateobjaddr0)
 	so0.SetBalance(big.NewInt(42))
 	so0.SetNonce(43)

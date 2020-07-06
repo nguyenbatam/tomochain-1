@@ -110,7 +110,16 @@ func New(root common.Hash, db *Database) (*Trie, error) {
 	}
 	return trie, nil
 }
-
+func NewEmptyTrie(root common.Hash, db *Database) (*Trie, error) {
+	if db == nil {
+		panic("trie.New called without a database")
+	}
+	trie := &Trie{
+		Db:           db,
+		originalRoot: root,
+	}
+	return trie, nil
+}
 // NodeIterator returns an iterator that returns nodes of the trie. Iteration starts at
 // the key after the given start key.
 func (t *Trie) NodeIterator(start []byte) NodeIterator {

@@ -38,7 +38,7 @@ import (
 // Tests that updating a state trie does not leak any database writes prior to
 // actually committing the state.
 func TestUpdateLeaks(t *testing.T) {
-	// Create an empty state database
+	// Create an Empty state database
 	db, _ := ethdb.NewMemDatabase()
 	state, _ := New(common.Hash{}, NewDatabase(db))
 
@@ -187,7 +187,7 @@ func TestSnapshotRandom(t *testing.T) {
 //
 // A new state is created and all actions are applied to it. Several snapshots are taken
 // in between actions. The test then reverts each snapshot. For each snapshot the actions
-// leading up to it are replayed on a fresh, empty state. The behaviour of all public
+// leading up to it are replayed on a fresh, Empty state. The behaviour of all public
 // accessor methods on the reverted state must match the return value of the equivalent
 // methods on the replayed state.
 type snapshotTest struct {

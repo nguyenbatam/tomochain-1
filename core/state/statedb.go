@@ -37,10 +37,10 @@ type revision struct {
 }
 
 var (
-	// emptyState is the known hash of an empty state trie entry.
+	// emptyState is the known hash of an Empty state trie entry.
 	emptyState = crypto.Keccak256Hash(nil)
 
-	// emptyCode is the known hash of the empty EVM bytecode.
+	// emptyCode is the known hash of the Empty EVM bytecode.
 	emptyCode = crypto.Keccak256Hash(nil)
 )
 
@@ -86,6 +86,20 @@ type StateDB struct {
 // Create a new state from a given trie.
 func New(root common.Hash, db Database) (*StateDB, error) {
 	tr, err := db.OpenTrie(root)
+	if err != nil {
+		return nil, err
+	}
+	return &StateDB{
+		db:                db,
+		trie:              tr,
+		stateObjects:      make(map[common.Address]*stateObject),
+		stateObjectsDirty: make(map[common.Address]struct{}),
+		logs:              make(map[common.Hash][]*types.Log),
+		preimages:         make(map[common.Hash][]byte),
+	}, nil
+}
+func NewEmpty(root common.Hash, db Database) (*StateDB, error) {
+	tr, err := db.(*cachingDB).OpenEmptyTrie(root)
 	if err != nil {
 		return nil, err
 	}
@@ -180,10 +194,10 @@ func (self *StateDB) Exist(addr common.Address) bool {
 }
 
 // Empty returns whether the state object is either non-existent
-// or empty according to the EIP161 specification (balance = nonce = code = 0)
+// or Empty according to the EIP161 specification (balance = nonce = code = 0)
 func (self *StateDB) Empty(addr common.Address) bool {
 	so := self.getStateObject(addr)
-	return so == nil || so.empty()
+	return so == nil || so.Empty()
 }
 
 // Retrieve the balance from the given address or 0 if object not found
@@ -405,6 +419,23 @@ func (self *StateDB) GetOrNewStateObject(addr common.Address) *stateObject {
 	return stateObject
 }
 
+// Retrieve a state object given my the address. Returns nil if not found.
+func (self *StateDB) GetStateObjectNotCache(addr common.Address) (stateObject *stateObject) {
+	// Load the object from the database.
+	enc, err := self.trie.TryGet(addr[:])
+	if len(enc) == 0 {
+		self.setError(err)
+		return nil
+	}
+	var data Account
+	if err := rlp.DecodeBytes(enc, &data); err != nil {
+		log.Error("Failed to decode state object", "addr", addr, "err", err)
+		return nil
+	}
+	// Insert into the live set.
+	obj := newObject(self, addr, data, self.MarkStateObjectDirty)
+	return obj
+}
 // MarkStateObjectDirty adds the specified object to the dirty map to avoid costly
 // state object cache iteration to find a handful of modified ones.
 func (self *StateDB) MarkStateObjectDirty(addr common.Address) {
@@ -424,6 +455,15 @@ func (self *StateDB) createObject(addr common.Address) (newobj, prev *stateObjec
 	}
 	self.setStateObject(newobj)
 	return newobj, prev
+}
+
+// CreateObject creates a new state object. If there is an existing account with
+// the given address, it is overwritten and returned as the second return value.
+func (self *StateDB) NewObject(addr common.Address) (newobj *stateObject) {
+	newobj = newObject(self, addr, Account{}, self.MarkStateObjectDirty)
+	newobj.setNonce(0) // sets the object to dirty
+	self.setStateObject(newobj)
+	return newobj
 }
 
 // CreateAccount explicitly creates a state object. If a state object with the address
@@ -462,6 +502,23 @@ func (db *StateDB) ForEachStorage(addr common.Address, cb func(key, value common
 			cb(key, common.BytesToHash(it.Value))
 		}
 	}
+}
+
+func (db *StateDB) ForEachStorageAndCheck(addr common.Address, cb func(key, value common.Hash) bool) bool {
+	so := db.GetStateObjectNotCache(addr)
+	if so == nil {
+		return true
+	}
+
+	it := trie.NewIterator(so.getTrie(db.db).NodeIterator(nil))
+	for it.Next() {
+		// ignore cached values
+		key := common.BytesToHash(db.trie.GetKey(it.Key))
+		if !cb(key, common.BytesToHash(it.Value)) {
+			return false
+		}
+	}
+	return true
 }
 
 // Copy creates a deep, independent copy of the state.
@@ -535,7 +592,7 @@ func (self *StateDB) GetRefund() uint64 {
 func (s *StateDB) Finalise(deleteEmptyObjects bool) {
 	for addr := range s.stateObjectsDirty {
 		stateObject := s.stateObjects[addr]
-		if stateObject.suicided || (deleteEmptyObjects && stateObject.empty()) {
+		if stateObject.suicided || (deleteEmptyObjects && stateObject.Empty()) {
 			s.deleteStateObject(stateObject)
 		} else {
 			stateObject.updateRoot(s.db)
@@ -597,7 +654,7 @@ func (s *StateDB) Commit(deleteEmptyObjects bool) (root common.Hash, err error) 
 	for addr, stateObject := range s.stateObjects {
 		_, isDirty := s.stateObjectsDirty[addr]
 		switch {
-		case stateObject.suicided || (isDirty && deleteEmptyObjects && stateObject.empty()):
+		case stateObject.suicided || (isDirty && deleteEmptyObjects && stateObject.Empty()):
 			// If the object has been removed, don't bother syncing it
 			// and just mark it for deletion in the trie.
 			s.deleteStateObject(stateObject)
