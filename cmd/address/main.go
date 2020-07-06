@@ -43,11 +43,17 @@ func main() {
 	mapNonces := map[common.Address]uint64{}
 	number := *from
 	before := uint64(0)
+	count := 0
 	go func() {
 		for addr := range addrChan {
 			if !cache.Contains(addr) {
 				cache.Add(addr, true)
 				f.WriteString(addr + "\n")
+				count++
+				if count%1000 == 0 {
+					count = 0
+					f.Sync()
+				}
 			}
 		}
 	}()
