@@ -129,6 +129,37 @@ func GetAllTradingPairs(statedb *state.StateDB) (map[common.Hash]bool, error) {
 	return allPairs, nil
 }
 
+func GetAllTradingTokens(statedb *state.StateDB) (map[common.Address]bool, error) {
+	coinbases := GetAllCoinbases(statedb)
+	slot := RelayerMappingSlot["RELAYER_LIST"]
+	allTokens := map[common.Address]bool{}
+	for _, coinbase := range coinbases {
+		locBig := GetLocMappingAtKey(coinbase.Hash(), slot)
+		fromTokenSlot := new(big.Int).Add(locBig, RelayerStructMappingSlot["_fromTokens"])
+		fromTokenLength := statedb.GetState(common.HexToAddress(common.RelayerRegistrationSMC), common.BigToHash(fromTokenSlot)).Big().Uint64()
+		toTokenSlot := new(big.Int).Add(locBig, RelayerStructMappingSlot["_toTokens"])
+		toTokenLength := statedb.GetState(common.HexToAddress(common.RelayerRegistrationSMC), common.BigToHash(toTokenSlot)).Big().Uint64()
+		if toTokenLength != fromTokenLength {
+			return allTokens, fmt.Errorf("Invalid length from token & to toke : from :%d , to :%d ", fromTokenLength, toTokenLength)
+		}
+		fromTokens := []common.Address{}
+		fromTokenSlotHash := common.BytesToHash(fromTokenSlot.Bytes())
+		for i := uint64(0); i < fromTokenLength; i++ {
+			fromToken := common.BytesToAddress(statedb.GetState(common.HexToAddress(common.RelayerRegistrationSMC), state.GetLocDynamicArrAtElement(fromTokenSlotHash, i, uint64(1))).Bytes())
+			fromTokens = append(fromTokens, fromToken)
+			allTokens[fromToken]=true
+		}
+		toTokenSlotHash := common.BytesToHash(toTokenSlot.Bytes())
+		for i := uint64(0); i < toTokenLength; i++ {
+			toToken := common.BytesToAddress(statedb.GetState(common.HexToAddress(common.RelayerRegistrationSMC), state.GetLocDynamicArrAtElement(toTokenSlotHash, i, uint64(1))).Bytes())
+			log.Debug("GetAllTradingPairs all pair info", "from", fromTokens[i].Hex(), "toToken", toToken.Hex())
+			allTokens[toToken]=true
+		}
+	}
+	log.Debug("GetAllTradingPairs", "coinbase", len(coinbases), "allTokens", len(allTokens))
+	return allTokens, nil
+}
+
 func SubRelayerFee(relayer common.Address, fee *big.Int, statedb *state.StateDB) error {
 	slot := RelayerMappingSlot["RELAYER_LIST"]
 	locBig := GetLocMappingAtKey(relayer.Hash(), slot)

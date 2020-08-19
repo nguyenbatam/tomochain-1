@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"github.com/tomochain/tomochain/tomox"
 
 	"github.com/tomochain/tomochain/accounts"
 	"github.com/tomochain/tomochain/tomoxlending/lendingstate"
@@ -668,7 +669,14 @@ func (self *worker) commitNewWork() {
 					log.Debug("Start processing order pending")
 					tradingOrderPending, _ := self.eth.OrderPool().Pending()
 					log.Debug("Start processing order pending", "len", len(tradingOrderPending))
-					tradingTxMatches, tradingMatchingResults = tomoX.ProcessOrderPending(header, self.coinbase, self.chain, tradingOrderPending, work.state, work.tradingState)
+					allPairs, err := lendingstate.GetAllLendingPairs(work.state)
+					allTradingTokens, err := tradingstate.GetAllTradingTokens(work.state)
+					err, allTokenDecimalPending := self.getAllTokenDecimalPending(work.state, allPairs, allTradingTokens)
+					if err != nil {
+						log.Error("Fail when all token decimal ", "error", err)
+						return
+					}
+					tradingTxMatches, tradingMatchingResults = tomoX.ProcessOrderPending(header, self.coinbase, self.chain, tradingOrderPending, work.state, work.tradingState, allTokenDecimalPending)
 					log.Debug("trading transaction matches found", "tradingTxMatches", len(tradingTxMatches))
 
 					lendingOrderPending, _ := self.eth.LendingPool().Pending()
@@ -1085,4 +1093,54 @@ func (env *Work) commitTransaction(balanceFee map[common.Address]*big.Int, tx *t
 	env.receipts = append(env.receipts, receipt)
 
 	return nil, receipt.Logs, tokenFeeUsed, gas
+}
+
+func (self *worker) getTokenDecimal(statedb *state.StateDB, tokenAddr common.Address) (*big.Int, error) {
+	if tokenAddr.String() == common.TomoNativeAddress {
+		return common.BasePrice, nil
+	}
+	var decimals uint8
+	defer func() {
+		log.Debug("GetTokenDecimal from ", "relayerSMC", common.RelayerRegistrationSMC, "tokenAddr", tokenAddr.Hex(), "decimals", decimals)
+	}()
+	contractABI, err := tomox.GetTokenAbi()
+	if err != nil {
+		return nil, err
+	}
+	stateCopy := statedb.Copy()
+	result, err := tomox.RunContract(self.chain, stateCopy, tokenAddr, contractABI, "decimals")
+	if err != nil {
+		return nil, err
+	}
+	decimals = result.(uint8)
+
+	tokenDecimal := new(big.Int).SetUint64(0).Exp(big.NewInt(10), big.NewInt(int64(decimals)), nil)
+	return tokenDecimal, nil
+}
+func (self *worker) getAllTokenDecimalPending(statedb *state.StateDB, allPairs []lendingstate.LendingPair, allTradingTokens map[common.Address]bool) (error, map[common.Address]*big.Int) {
+	result := map[common.Address]*big.Int{}
+	for _, pair := range allPairs {
+
+		tokenDecimal, err := self.getTokenDecimal(statedb, pair.LendingToken)
+		if err != nil {
+			log.Error("Fail when all token decimal ", "token", pair.LendingToken, "error", err)
+			return err, nil
+		}
+		result[pair.LendingToken] = tokenDecimal
+		tokenDecimal, err = self.getTokenDecimal(statedb, pair.CollateralToken)
+		if err != nil {
+			log.Error("Fail when all token decimal ", "token", pair.CollateralToken, "error", err)
+			return err, nil
+		}
+		result[pair.CollateralToken] = tokenDecimal
+	}
+	for token, _ := range allTradingTokens {
+		tokenDecimal, err := self.getTokenDecimal(statedb, token)
+		if err != nil {
+			log.Error("Fail when all token decimal ", "token", token, "error", err)
+			return err, nil
+		}
+		result[token] = tokenDecimal
+	}
+	return nil, result
 }

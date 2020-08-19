@@ -17,9 +17,14 @@
 package vm
 
 import (
+	"github.com/tomochain/tomochain/consensus"
+	"github.com/tomochain/tomochain/core/state"
+	"github.com/tomochain/tomochain/core/types"
 	"github.com/tomochain/tomochain/tomox/tradingstate"
 	"errors"
 	"github.com/tomochain/tomochain/params"
+	"github.com/tomochain/tomochain/tomoxlending"
+	"github.com/tomochain/tomochain/tomoxlending/lendingstate"
 	"math/big"
 	"sync/atomic"
 	"time"
@@ -58,6 +63,8 @@ func run(evm *EVM, contract *Contract, input []byte, readOnly bool) ([]byte, err
 				p.(*tomoxEpochPrice).SetTradingState(evm.tradingStateDB)
 			case *tomoxLastPrice:
 				p.(*tomoxLastPrice).SetTradingState(evm.tradingStateDB)
+			case *tomoxLendingOrder:
+				p.(*tomoxLendingOrder).SetInfo(evm.lending, evm.header, evm.Coinbase, evm.chain, evm.stateDb, evm.lendingStateDb, evm.tradingStateDB)
 			}
 			return RunPrecompiledContract(p, input, contract)
 		}
@@ -117,7 +124,11 @@ type EVM struct {
 	StateDB StateDB
 
 	tradingStateDB *tradingstate.TradingStateDB
-
+	lending        *tomoxlending.Lending
+	header         *types.Header
+	chain          consensus.ChainContext
+	lendingStateDb *lendingstate.LendingStateDB
+	stateDb        *state.StateDB
 	// Depth is the current call stack
 	depth int
 
@@ -145,13 +156,13 @@ type EVM struct {
 // only ever be used *once*.
 func NewEVM(ctx Context, statedb StateDB, tradingStateDB *tradingstate.TradingStateDB, chainConfig *params.ChainConfig, vmConfig Config) *EVM {
 	evm := &EVM{
-		Context:      ctx,
-		StateDB:      statedb,
+		Context:        ctx,
+		StateDB:        statedb,
 		tradingStateDB: tradingStateDB,
-		vmConfig:     vmConfig,
-		chainConfig:  chainConfig,
-		chainRules:   chainConfig.Rules(ctx.BlockNumber),
-		interpreters: make([]Interpreter, 0, 1),
+		vmConfig:       vmConfig,
+		chainConfig:    chainConfig,
+		chainRules:     chainConfig.Rules(ctx.BlockNumber),
+		interpreters:   make([]Interpreter, 0, 1),
 	}
 
 	// vmConfig.EVMInterpreter will be used by EVM-C, it won't be checked here

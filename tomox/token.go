@@ -2,7 +2,6 @@ package tomox
 
 import (
 	"github.com/tomochain/tomochain/contracts/tomox/contract"
-	"github.com/tomochain/tomochain/log"
 	"math/big"
 	"strings"
 
@@ -43,34 +42,34 @@ func RunContract(chain consensus.ChainContext, statedb *state.StateDB, contractA
 	}
 	return unpackResult, nil
 }
-
-func (tomox *TomoX) GetTokenDecimal(chain consensus.ChainContext, statedb *state.StateDB, tokenAddr common.Address) (*big.Int, error) {
-	if tokenDecimal, ok := tomox.tokenDecimalCache.Get(tokenAddr); ok {
-		return tokenDecimal.(*big.Int), nil
-	}
-	if tokenAddr.String() == common.TomoNativeAddress {
-		tomox.tokenDecimalCache.Add(tokenAddr, common.BasePrice)
-		return common.BasePrice, nil
-	}
-	var decimals uint8
-	defer func() {
-		log.Debug("GetTokenDecimal from ", "relayerSMC", common.RelayerRegistrationSMC, "tokenAddr", tokenAddr.Hex(), "decimals", decimals)
-	}()
-	contractABI, err := GetTokenAbi()
-	if err != nil {
-		return nil, err
-	}
-	stateCopy := statedb.Copy()
-	result, err := RunContract(chain, stateCopy, tokenAddr, contractABI, "decimals")
-	if err != nil {
-		return nil, err
-	}
-	decimals = result.(uint8)
-
-	tokenDecimal := new(big.Int).SetUint64(0).Exp(big.NewInt(10), big.NewInt(int64(decimals)), nil)
-	tomox.tokenDecimalCache.Add(tokenAddr, tokenDecimal)
-	return tokenDecimal, nil
-}
+//
+//func (tomox *TomoX) GetTokenDecimal(chain consensus.ChainContext, statedb *state.StateDB, tokenAddr common.Address) (*big.Int, error) {
+//	if tokenDecimal, ok := tomox.tokenDecimalCache.Get(tokenAddr); ok {
+//		return tokenDecimal.(*big.Int), nil
+//	}
+//	if tokenAddr.String() == common.TomoNativeAddress {
+//		tomox.tokenDecimalCache.Add(tokenAddr, common.BasePrice)
+//		return common.BasePrice, nil
+//	}
+//	var decimals uint8
+//	defer func() {
+//		log.Debug("GetTokenDecimal from ", "relayerSMC", common.RelayerRegistrationSMC, "tokenAddr", tokenAddr.Hex(), "decimals", decimals)
+//	}()
+//	contractABI, err := GetTokenAbi()
+//	if err != nil {
+//		return nil, err
+//	}
+//	stateCopy := statedb.Copy()
+//	result, err := RunContract(chain, stateCopy, tokenAddr, contractABI, "decimals")
+//	if err != nil {
+//		return nil, err
+//	}
+//	decimals = result.(uint8)
+//
+//	tokenDecimal := new(big.Int).SetUint64(0).Exp(big.NewInt(10), big.NewInt(int64(decimals)), nil)
+//	tomox.tokenDecimalCache.Add(tokenAddr, tokenDecimal)
+//	return tokenDecimal, nil
+//}
 
 // FIXME: using in unit tests only
 func (tomox *TomoX) SetTokenDecimal(token common.Address, decimal *big.Int) {
