@@ -18,15 +18,21 @@ package core
 
 import (
 	"fmt"
+	"github.com/tomochain/tomochain"
+	"github.com/tomochain/tomochain/accounts/abi"
 	"github.com/tomochain/tomochain/common"
 	"github.com/tomochain/tomochain/consensus"
 	"github.com/tomochain/tomochain/consensus/posv"
+	"github.com/tomochain/tomochain/contracts/trc21issuer/contract"
 	"github.com/tomochain/tomochain/core/state"
 	"github.com/tomochain/tomochain/core/types"
+	"github.com/tomochain/tomochain/core/vm"
 	"github.com/tomochain/tomochain/log"
 	"github.com/tomochain/tomochain/params"
 	"github.com/tomochain/tomochain/tomox/tradingstate"
 	"github.com/tomochain/tomochain/tomoxlending/lendingstate"
+	"math/big"
+	"strings"
 )
 
 // BlockValidator is responsible for validating block headers, uncles and
@@ -105,7 +111,7 @@ func (v *BlockValidator) ValidateState(block, parent *types.Block, statedb *stat
 	return nil
 }
 
-func (v *BlockValidator) ValidateTradingOrder(statedb *state.StateDB, tomoxStatedb *tradingstate.TradingStateDB, txMatchBatch tradingstate.TxMatchBatch, coinbase common.Address, header *types.Header) error {
+func (v *BlockValidator) ValidateTradingOrder(tokenDecimals map[common.Address]*big.Int, statedb *state.StateDB, tomoxStatedb *tradingstate.TradingStateDB, txMatchBatch tradingstate.TxMatchBatch, coinbase common.Address, header *types.Header) error {
 	posvEngine, ok := v.bc.Engine().(*posv.Posv)
 	if posvEngine == nil || !ok {
 		return ErrNotPoSV
@@ -126,7 +132,7 @@ func (v *BlockValidator) ValidateTradingOrder(statedb *state.StateDB, tomoxState
 
 		log.Debug("process tx match", "order", order)
 		// process Matching Engine
-		newTrades, newRejectedOrders, err := tomoXService.ApplyOrder(header, coinbase, v.bc, statedb, tomoxStatedb, tradingstate.GetTradingOrderBookHash(order.BaseToken, order.QuoteToken), order)
+		newTrades, newRejectedOrders, err := tomoXService.ApplyOrder(tokenDecimals, header, coinbase, v.bc, statedb, tomoxStatedb, tradingstate.GetTradingOrderBookHash(order.BaseToken, order.QuoteToken), order)
 		if err != nil {
 			return err
 		}
@@ -141,7 +147,7 @@ func (v *BlockValidator) ValidateTradingOrder(statedb *state.StateDB, tomoxState
 	return nil
 }
 
-func (v *BlockValidator) ValidateLendingOrder(statedb *state.StateDB, lendingStateDb *lendingstate.LendingStateDB, tomoxStatedb *tradingstate.TradingStateDB, batch lendingstate.TxLendingBatch, coinbase common.Address, header *types.Header) error {
+func (v *BlockValidator) ValidateLendingOrder(tokenDecimals map[common.Address]*big.Int,statedb *state.StateDB, lendingStateDb *lendingstate.LendingStateDB, tomoxStatedb *tradingstate.TradingStateDB, batch lendingstate.TxLendingBatch, coinbase common.Address, header *types.Header) error {
 	posvEngine, ok := v.bc.Engine().(*posv.Posv)
 	if posvEngine == nil || !ok {
 		return ErrNotPoSV
@@ -161,7 +167,7 @@ func (v *BlockValidator) ValidateLendingOrder(statedb *state.StateDB, lendingSta
 
 		log.Debug("process lending tx", "lendingItem", lendingstate.ToJSON(l))
 		// process Matching Engine
-		newTrades, newRejectedOrders, err := lendingService.ApplyOrder(header, coinbase, v.bc, statedb, lendingStateDb, tomoxStatedb, lendingstate.GetLendingOrderBookHash(l.LendingToken, l.Term), l)
+		newTrades, newRejectedOrders, err := lendingService.ApplyOrder(tokenDecimals, header, coinbase, v.bc, statedb, lendingStateDb, tomoxStatedb, lendingstate.GetLendingOrderBookHash(l.LendingToken, l.Term), l)
 		if err != nil {
 			return err
 		}
@@ -253,4 +259,105 @@ func ExtractLendingFinalizedTradeTransactions(transactions types.Transactions) (
 		}
 	}
 	return lendingstate.FinalizedResult{}, nil
+}
+
+// runContract run smart contract
+func runContract(chain consensus.ChainContext, statedb *state.StateDB, contractAddr common.Address, abi *abi.ABI, method string, args ...interface{}) (interface{}, error) {
+	input, err := abi.Pack(method)
+	if err != nil {
+		return nil, err
+	}
+	fakeCaller := common.HexToAddress("0x0000000000000000000000000000000000000001")
+	call := tomochain.CallMsg{To: &contractAddr, Data: input, From: fakeCaller}
+	call.GasPrice = big.NewInt(0)
+	if call.Gas == 0 {
+		call.Gas = 1000000
+	}
+	if call.Value == nil {
+		call.Value = new(big.Int)
+	}
+	// Execute the call.
+	msg := Callmsg{call}
+	feeCapacity := state.GetTRC21FeeCapacityFromState(statedb)
+	if msg.To() != nil {
+		if value, ok := feeCapacity[*msg.To()]; ok {
+			msg.CallMsg.BalanceTokenFee = value
+		}
+	}
+	evmContext := NewEVMContext(msg, chain.CurrentHeader(), chain, nil)
+	// Create a new environment which holds all relevant information
+	// about the transaction and calling mechanisms.
+	vmenv := vm.NewEVM(evmContext, statedb, nil, chain.Config(), vm.Config{})
+	gaspool := new(GasPool).AddGas(1000000)
+	owner := common.Address{}
+	rval, _, _, err := NewStateTransition(vmenv, msg, gaspool).TransitionDb(owner)
+	if err != nil {
+		return nil, err
+	}
+	return rval, err
+	var unpackResult interface{}
+	err = abi.Unpack(&unpackResult, method, rval)
+	if err != nil {
+		return nil, err
+	}
+	return unpackResult, nil
+}
+
+// getTokenAbi return token abi
+func getTokenAbi() (*abi.ABI, error) {
+	contractABI, err := abi.JSON(strings.NewReader(contract.TRC21ABI))
+	if err != nil {
+		return nil, err
+	}
+	return &contractABI, nil
+}
+func getTokenDecimal(chain consensus.ChainContext, statedb *state.StateDB, tokenAddr common.Address) (tokenDecimal *big.Int, err error) {
+	if tokenAddr.String() == common.TomoNativeAddress {
+		return common.BasePrice, nil
+	}
+	var decimals uint8
+	defer func() {
+		log.Debug("GetTokenDecimal from ", "relayerSMC", common.RelayerRegistrationSMC, "tokenAddr", tokenAddr.Hex(), "decimals", decimals, "tokenDecimal", tokenDecimal, "err", err)
+	}()
+	var contractABI *abi.ABI
+	contractABI, err = getTokenAbi()
+	if err != nil {
+		return nil, err
+	}
+	stateCopy := statedb.Copy()
+	result, err := runContract(chain, stateCopy, tokenAddr, contractABI, "decimals")
+	if err != nil {
+		return nil, err
+	}
+	decimals = result.(uint8)
+
+	tokenDecimal = new(big.Int).SetUint64(0).Exp(big.NewInt(10), big.NewInt(int64(decimals)), nil)
+	return tokenDecimal, nil
+}
+func UpdateAllTokensDecimal(chain consensus.ChainContext, statedb *state.StateDB, tokenDecimals map[common.Address]*big.Int) map[common.Address]*big.Int {
+	allPairs, _ := lendingstate.GetAllLendingPairs(statedb)
+	allTradingTokens, _ := tradingstate.GetAllTradingTokens(statedb)
+	for _, pair := range allPairs {
+		if decimal := tokenDecimals[pair.LendingToken]; decimal == nil || decimal.Sign() == 0 {
+			tokenDecimal, _ := getTokenDecimal(chain, statedb, pair.LendingToken)
+			if tokenDecimal != nil && tokenDecimal.Sign() > 0 {
+				tokenDecimals[pair.LendingToken] = tokenDecimal
+			}
+		}
+		if decimal := tokenDecimals[pair.CollateralToken]; decimal == nil || decimal.Sign() == 0 {
+			tokenDecimal, _ := getTokenDecimal(chain, statedb, pair.CollateralToken)
+			if tokenDecimal != nil && tokenDecimal.Sign() > 0 {
+				tokenDecimals[pair.CollateralToken] = tokenDecimal
+			}
+		}
+	}
+	for token, _ := range allTradingTokens {
+		if decimal := tokenDecimals[token]; decimal == nil || decimal.Sign() == 0 {
+			tokenDecimal, _ := getTokenDecimal(chain, statedb, token)
+			if tokenDecimal != nil && tokenDecimal.Sign() > 0 {
+				tokenDecimals[token] = tokenDecimal
+			}
+		}
+	}
+	return tokenDecimals
 }

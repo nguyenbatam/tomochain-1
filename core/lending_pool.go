@@ -138,13 +138,14 @@ type LendingPool struct {
 	locals  *lendingAccountSet // Set of local transaction to exempt from eviction rules
 	journal *lendingtxJournal  // Journal of local transaction to back up to disk
 
-	pending   map[common.Address]*lendingtxList         // All currently processable transactions
-	queue     map[common.Address]*lendingtxList         // Queued but non-processable transactions
-	beats     map[common.Address]time.Time              // Last heartbeat from each known account
-	all       map[common.Hash]*types.LendingTransaction // All transactions to allow lookups
-	wg        sync.WaitGroup                            // for shutdown sync
-	homestead bool
-	IsSigner  func(address common.Address) bool
+	pending       map[common.Address]*lendingtxList         // All currently processable transactions
+	queue         map[common.Address]*lendingtxList         // Queued but non-processable transactions
+	beats         map[common.Address]time.Time              // Last heartbeat from each known account
+	all           map[common.Hash]*types.LendingTransaction // All transactions to allow lookups
+	wg            sync.WaitGroup                            // for shutdown sync
+	homestead     bool
+	IsSigner      func(address common.Address) bool
+	tokenDecimals map[common.Address]*big.Int
 }
 
 // NewLendingPool creates a new transaction pool to gather, sort and filter inbound
@@ -155,15 +156,16 @@ func NewLendingPool(chainconfig *params.ChainConfig, chain blockChainLending) *L
 	log.Debug("NewLendingPool start...", "current block", chain.CurrentBlock().Header().Number)
 	// Create the transaction pool with its initial settings
 	pool := &LendingPool{
-		config:      config,
-		chainconfig: chainconfig,
-		chain:       chain,
-		signer:      types.LendingTxSigner{},
-		pending:     make(map[common.Address]*lendingtxList),
-		queue:       make(map[common.Address]*lendingtxList),
-		beats:       make(map[common.Address]time.Time),
-		all:         make(map[common.Hash]*types.LendingTransaction),
-		chainHeadCh: make(chan ChainHeadEvent, chainHeadChanSize),
+		config:        config,
+		chainconfig:   chainconfig,
+		chain:         chain,
+		signer:        types.LendingTxSigner{},
+		pending:       make(map[common.Address]*lendingtxList),
+		queue:         make(map[common.Address]*lendingtxList),
+		beats:         make(map[common.Address]time.Time),
+		all:           make(map[common.Hash]*types.LendingTransaction),
+		chainHeadCh:   make(chan ChainHeadEvent, chainHeadChanSize),
+		tokenDecimals: make(map[common.Address]*big.Int),
 	}
 	pool.locals = newLendingAccountSet(pool.signer)
 	pool.reset(nil, chain.CurrentBlock())
@@ -291,14 +293,13 @@ func (pool *LendingPool) reset(oldHead, newblock *types.Block) {
 	}
 	pool.currentLendingState = lendingState
 	pool.pendingState = lendingstate.ManageState(lendingState)
-
 	state, err := pool.chain.StateAt(newHead.Root)
 	if err != nil {
 		log.Error("Failed to reset pool state", "err", err)
 		return
 	}
 	pool.currentRootState = state
-
+	pool.tokenDecimals = UpdateAllTokensDecimal(pool.chain, state, pool.tokenDecimals)
 	// Inject any transactions discarded due to reorgs
 	log.Debug("Reinjecting stale transactions", "count", len(reinject))
 	pool.addTxsLocked(reinject, false)
@@ -523,9 +524,9 @@ func (pool *LendingPool) validateBalance(cloneStateDb *state.StateDB, cloneLendi
 	if tomoXServ == nil {
 		return fmt.Errorf("tomox not found in order validation")
 	}
-	lendingTokenDecimal, err := tomoXServ.GetTokenDecimal(pool.chain, cloneStateDb, tx.LendingToken())
-	if err != nil {
-		return fmt.Errorf("validateOrder: failed to get lendingTokenDecimal. err: %v", err)
+	lendingTokenDecimal := pool.tokenDecimals[tx.LendingToken()]
+	if lendingTokenDecimal == nil || lendingTokenDecimal.Sign() == 0 {
+		return fmt.Errorf("validateOrder: failed to get lendingTokenDecimal. lendingTokenDecimal: %v", lendingTokenDecimal)
 	}
 	author, err := pool.chain.Engine().Author(pool.chain.CurrentHeader())
 	if err != nil {
@@ -542,11 +543,11 @@ func (pool *LendingPool) validateBalance(cloneStateDb *state.StateDB, cloneLendi
 	// lendTokenTOMOPrice: price of lendingToken in TOMO quote
 	var lendTokenTOMOPrice, collateralPrice, collateralTokenDecimal *big.Int
 	if collateralToken.String() != lendingstate.EmptyAddress {
-		collateralTokenDecimal, err = tomoXServ.GetTokenDecimal(pool.chain, cloneStateDb, collateralToken)
-		if err != nil {
-			return fmt.Errorf("validateOrder: failed to get collateralTokenDecimal. err: %v", err)
+		collateralTokenDecimal = pool.tokenDecimals[collateralToken]
+		if collateralTokenDecimal == nil || collateralTokenDecimal.Sign() == 0 {
+			return fmt.Errorf("validateOrder: failed to get collateralTokenDecimal. collateralTokenDecimal: %v", collateralTokenDecimal)
 		}
-		lendTokenTOMOPrice, collateralPrice, err = lendingServ.GetCollateralPrices(pool.chain.CurrentHeader(), pool.chain, cloneStateDb, cloneTradingStateDb, collateralToken, tx.LendingToken())
+		lendTokenTOMOPrice, collateralPrice, err = lendingServ.GetCollateralPrices(pool.tokenDecimals, pool.chain.CurrentHeader(), pool.chain, cloneStateDb, cloneTradingStateDb, collateralToken, tx.LendingToken())
 		if err != nil {
 			return err
 		}
@@ -559,7 +560,7 @@ func (pool *LendingPool) validateBalance(cloneStateDb *state.StateDB, cloneLendi
 		if tx.LendingToken().String() == common.TomoNativeAddress {
 			lendTokenTOMOPrice = common.BasePrice
 		} else {
-			lendTokenTOMOPrice, err = lendingServ.GetMediumTradePriceBeforeEpoch(pool.chain, cloneStateDb, cloneTradingStateDb, tx.LendingToken(), common.HexToAddress(common.TomoNativeAddress))
+			lendTokenTOMOPrice, err = lendingServ.GetMediumTradePriceBeforeEpoch(pool.tokenDecimals, cloneTradingStateDb, tx.LendingToken(), common.HexToAddress(common.TomoNativeAddress))
 			if err != nil {
 				return err
 			}

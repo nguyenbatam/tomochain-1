@@ -235,6 +235,44 @@ func (l *LendingItem) VerifyLendingItem(state *state.StateDB) error {
 	return nil
 }
 
+func (l *LendingItem) VerifyEVMLendingItem(state *state.StateDB) error {
+	if err := l.VerifyLendingStatus(); err != nil {
+		return err
+	}
+	if valid, _ := IsValidPair(state, l.Relayer, l.LendingToken, l.Term); valid == false {
+		return fmt.Errorf("invalid pair . LendToken %s . Term: %v", l.LendingToken.Hex(), l.Term)
+	}
+	if l.Status == LendingStatusNew {
+		if err := l.VerifyLendingType(); err != nil {
+			return err
+		}
+		if l.Type != Repay {
+			if err := l.VerifyLendingQuantity(); err != nil {
+				return err
+			}
+		}
+		if l.Type == Limit || l.Type == Market {
+			if err := l.VerifyLendingSide(); err != nil {
+				return err
+			}
+			if l.Side == Borrowing {
+				if err := l.VerifyCollateral(state); err != nil {
+					return err
+				}
+			}
+		}
+		if l.Type == Limit {
+			if err := l.VerifyLendingInterest(); err != nil {
+				return err
+			}
+		}
+	}
+	if !IsValidRelayer(state, l.Relayer) {
+		return fmt.Errorf("VerifyLendingItem: invalid relayer. address: %s", l.Relayer.Hex())
+	}
+	return nil
+}
+
 func (l *LendingItem) VerifyLendingSide() error {
 	if l.Side != Borrowing && l.Side != Investing {
 		return fmt.Errorf("VerifyLendingSide: invalid side . Side: %s", l.Side)

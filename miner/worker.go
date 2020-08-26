@@ -20,8 +20,6 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
-	"github.com/tomochain/tomochain/tomox"
-
 	"github.com/tomochain/tomochain/accounts"
 	"github.com/tomochain/tomochain/tomoxlending/lendingstate"
 
@@ -147,6 +145,7 @@ type worker struct {
 	atWork                int32
 	announceTxs           bool
 	lastParentBlockCommit string
+	tokenDecimals         map[common.Address]*big.Int
 }
 
 func newWorker(config *params.ChainConfig, engine consensus.Engine, coinbase common.Address, eth Backend, mux *event.TypeMux, announceTxs bool) *worker {
@@ -167,6 +166,7 @@ func newWorker(config *params.ChainConfig, engine consensus.Engine, coinbase com
 		agents:         make(map[Agent]struct{}),
 		unconfirmed:    newUnconfirmedBlocks(eth.BlockChain(), miningLogAtDepth),
 		announceTxs:    announceTxs,
+		tokenDecimals:  map[common.Address]*big.Int{},
 	}
 	if worker.announceTxs {
 		// Subscribe TxPreEvent for tx pool
@@ -316,7 +316,7 @@ func (self *worker) update() {
 				txs := map[common.Address]types.Transactions{acc: {ev.Tx}}
 				feeCapacity := state.GetTRC21FeeCapacityFromState(self.current.state)
 				txset, specialTxs := types.NewTransactionsByPriceAndNonce(self.current.signer, txs, nil, feeCapacity)
-				self.current.commitTransactions(self.mux, feeCapacity, txset, specialTxs, self.chain, self.coinbase)
+				self.current.commitTransactions(self.mux, false, feeCapacity, txset, specialTxs, self.chain, self.coinbase)
 				self.currentMu.Unlock()
 			} else {
 				// If we're mining, but nothing is being processed, wake on new transactions
@@ -646,6 +646,7 @@ func (self *worker) commitNewWork() {
 		}
 		txs, specialTxs = types.NewTransactionsByPriceAndNonce(self.current.signer, pending, signers, feeCapacity)
 	}
+	isSDKNode := false
 	if atomic.LoadInt32(&self.mining) == 1 {
 		wallet, err := self.eth.AccountManager().Find(accounts.Account{Address: self.coinbase})
 		if err != nil {
@@ -663,27 +664,22 @@ func (self *worker) commitNewWork() {
 						return
 					}
 				}
+				isSDKNode = tomoX.IsSDKNode()
 				// won't grasp tx at checkpoint
 				//https://github.com/tomochain/tomochain-v1/pull/416
 				if header.Number.Uint64()%self.config.Posv.Epoch != 0 {
 					log.Debug("Start processing order pending")
 					tradingOrderPending, _ := self.eth.OrderPool().Pending()
 					log.Debug("Start processing order pending", "len", len(tradingOrderPending))
-					allPairs, err := lendingstate.GetAllLendingPairs(work.state)
-					allTradingTokens, err := tradingstate.GetAllTradingTokens(work.state)
-					err, allTokenDecimalPending := self.getAllTokenDecimalPending(work.state, allPairs, allTradingTokens)
-					if err != nil {
-						log.Error("Fail when all token decimal ", "error", err)
-						return
-					}
-					tradingTxMatches, tradingMatchingResults = tomoX.ProcessOrderPending(header, self.coinbase, self.chain, tradingOrderPending, work.state, work.tradingState, allTokenDecimalPending)
+					self.tokenDecimals = core.UpdateAllTokensDecimal(self.chain, work.state, self.tokenDecimals)
+					tradingTxMatches, tradingMatchingResults = tomoX.ProcessOrderPending(header, self.coinbase, self.chain, tradingOrderPending, work.state, work.tradingState, self.tokenDecimals)
 					log.Debug("trading transaction matches found", "tradingTxMatches", len(tradingTxMatches))
 
 					lendingOrderPending, _ := self.eth.LendingPool().Pending()
-					lendingInput, lendingMatchingResults = tomoXLending.ProcessOrderPending(header, self.coinbase, self.chain, lendingOrderPending, work.state, work.lendingState, work.tradingState)
+					lendingInput, lendingMatchingResults = tomoXLending.ProcessOrderPending(self.tokenDecimals, header, self.coinbase, self.chain, lendingOrderPending, work.state, work.lendingState, work.tradingState)
 					log.Debug("lending transaction matches found", "lendingInput", len(lendingInput), "lendingMatchingResults", len(lendingMatchingResults))
 					if header.Number.Uint64()%self.config.Posv.Epoch == common.LiquidateLendingTradeBlock {
-						updatedTrades, liquidatedTrades, autoRepayTrades, autoTopUpTrades, autoRecallTrades, err = tomoXLending.ProcessLiquidationData(header, self.chain, work.state, work.tradingState, work.lendingState)
+						updatedTrades, liquidatedTrades, autoRepayTrades, autoTopUpTrades, autoRecallTrades, err = tomoXLending.ProcessLiquidationData(self.tokenDecimals, header, self.chain, work.state, work.tradingState, work.lendingState)
 						if err != nil {
 							log.Error("Fail when process lending liquidation data ", "error", err)
 							return
@@ -709,7 +705,7 @@ func (self *worker) commitNewWork() {
 						return
 					} else {
 						tradingTransaction = txM
-						if tomoX.IsSDKNode() {
+						if isSDKNode {
 							self.chain.AddMatchingResult(tradingTransaction.Hash(), tradingMatchingResults)
 						}
 					}
@@ -734,7 +730,7 @@ func (self *worker) commitNewWork() {
 						return
 					} else {
 						lendingTransaction = signedLendingTx
-						if tomoX.IsSDKNode() {
+						if isSDKNode {
 							self.chain.AddLendingResult(lendingTransaction.Hash(), lendingMatchingResults)
 						}
 					}
@@ -755,7 +751,7 @@ func (self *worker) commitNewWork() {
 						return
 					} else {
 						lendingFinalizedTradeTransaction = signedFinalizedTx
-						if tomoX.IsSDKNode() {
+						if isSDKNode {
 							self.chain.AddFinalizedTrades(lendingFinalizedTradeTransaction.Hash(), updatedTrades)
 						}
 					}
@@ -785,7 +781,8 @@ func (self *worker) commitNewWork() {
 		}
 		specialTxs = append(specialTxs, txStateRoot)
 	}
-	work.commitTransactions(self.mux, feeCapacity, txs, specialTxs, self.chain, self.coinbase)
+	work.commitTransactions(self.mux, isSDKNode, feeCapacity, txs, specialTxs, self.chain, self.coinbase)
+	///
 	// compute uncles for the new block.
 	var (
 		uncles    []*types.Header
@@ -838,7 +835,7 @@ func (self *worker) commitUncle(work *Work, uncle *types.Header) error {
 	return nil
 }
 
-func (env *Work) commitTransactions(mux *event.TypeMux, balanceFee map[common.Address]*big.Int, txs *types.TransactionsByPriceAndNonce, specialTxs types.Transactions, bc *core.BlockChain, coinbase common.Address) {
+func (env *Work) commitTransactions(mux *event.TypeMux, isSDKNode bool, balanceFee map[common.Address]*big.Int, txs *types.TransactionsByPriceAndNonce, specialTxs types.Transactions, bc *core.BlockChain, coinbase common.Address) {
 	gp := new(core.GasPool).AddGas(env.header.GasLimit)
 	balanceUpdated := map[common.Address]*big.Int{}
 	totalFeeUsed := big.NewInt(0)
@@ -913,7 +910,7 @@ func (env *Work) commitTransactions(mux *event.TypeMux, balanceFee map[common.Ad
 			log.Trace("Skipping account with special transaction invalid nonce", "sender", from, "nonce", nonce, "tx nonce ", tx.Nonce(), "to", tx.To())
 			continue
 		}
-		err, logs, tokenFeeUsed, gas := env.commitTransaction(balanceFee, tx, bc, coinbase, gp)
+		err, logs, tokenFeeUsed, gas := env.commitTransaction(isSDKNode, balanceFee, tx, bc, coinbase, gp)
 		switch err {
 		case core.ErrNonceTooLow:
 			// New head notification data race between the transaction pool and miner, shift
@@ -1021,7 +1018,7 @@ func (env *Work) commitTransactions(mux *event.TypeMux, balanceFee map[common.Ad
 			txs.Pop()
 			continue
 		}
-		err, logs, tokenFeeUsed, gas := env.commitTransaction(balanceFee, tx, bc, coinbase, gp)
+		err, logs, tokenFeeUsed, gas := env.commitTransaction(isSDKNode, balanceFee, tx, bc, coinbase, gp)
 		switch err {
 		case core.ErrGasLimitReached:
 			// Pop the current out-of-gas transaction without shifting in the next from the account
@@ -1081,66 +1078,18 @@ func (env *Work) commitTransactions(mux *event.TypeMux, balanceFee map[common.Ad
 	}
 }
 
-func (env *Work) commitTransaction(balanceFee map[common.Address]*big.Int, tx *types.Transaction, bc *core.BlockChain, coinbase common.Address, gp *core.GasPool) (error, []*types.Log, bool, uint64) {
+func (env *Work) commitTransaction(isSDKNode bool, balanceFee map[common.Address]*big.Int, tx *types.Transaction, bc *core.BlockChain, coinbase common.Address, gp *core.GasPool) (error, []*types.Log, bool, uint64) {
 	snap := env.state.Snapshot()
 
-	receipt, gas, err, tokenFeeUsed := core.ApplyTransaction(env.config, balanceFee, bc, &coinbase, gp, env.state, env.tradingState, env.header, tx, &env.header.GasUsed, vm.Config{})
+	receipt, gas, tokenFeeUsed, lendingMatchingResults, err := core.ApplyTransaction(env.config, balanceFee, bc, &coinbase, gp, env.state, env.tradingState, env.header, tx, &env.header.GasUsed, vm.Config{})
 	if err != nil {
 		env.state.RevertToSnapshot(snap)
 		return err, nil, false, 0
 	}
 	env.txs = append(env.txs, tx)
 	env.receipts = append(env.receipts, receipt)
-
+	if isSDKNode {
+		bc.AddLendingResult(tx.Hash(), lendingMatchingResults)
+	}
 	return nil, receipt.Logs, tokenFeeUsed, gas
-}
-
-func (self *worker) getTokenDecimal(statedb *state.StateDB, tokenAddr common.Address) (*big.Int, error) {
-	if tokenAddr.String() == common.TomoNativeAddress {
-		return common.BasePrice, nil
-	}
-	var decimals uint8
-	defer func() {
-		log.Debug("GetTokenDecimal from ", "relayerSMC", common.RelayerRegistrationSMC, "tokenAddr", tokenAddr.Hex(), "decimals", decimals)
-	}()
-	contractABI, err := tomox.GetTokenAbi()
-	if err != nil {
-		return nil, err
-	}
-	stateCopy := statedb.Copy()
-	result, err := tomox.RunContract(self.chain, stateCopy, tokenAddr, contractABI, "decimals")
-	if err != nil {
-		return nil, err
-	}
-	decimals = result.(uint8)
-
-	tokenDecimal := new(big.Int).SetUint64(0).Exp(big.NewInt(10), big.NewInt(int64(decimals)), nil)
-	return tokenDecimal, nil
-}
-func (self *worker) getAllTokenDecimalPending(statedb *state.StateDB, allPairs []lendingstate.LendingPair, allTradingTokens map[common.Address]bool) (error, map[common.Address]*big.Int) {
-	result := map[common.Address]*big.Int{}
-	for _, pair := range allPairs {
-
-		tokenDecimal, err := self.getTokenDecimal(statedb, pair.LendingToken)
-		if err != nil {
-			log.Error("Fail when all token decimal ", "token", pair.LendingToken, "error", err)
-			return err, nil
-		}
-		result[pair.LendingToken] = tokenDecimal
-		tokenDecimal, err = self.getTokenDecimal(statedb, pair.CollateralToken)
-		if err != nil {
-			log.Error("Fail when all token decimal ", "token", pair.CollateralToken, "error", err)
-			return err, nil
-		}
-		result[pair.CollateralToken] = tokenDecimal
-	}
-	for token, _ := range allTradingTokens {
-		tokenDecimal, err := self.getTokenDecimal(statedb, token)
-		if err != nil {
-			log.Error("Fail when all token decimal ", "token", token, "error", err)
-			return err, nil
-		}
-		result[token] = tokenDecimal
-	}
-	return nil, result
 }

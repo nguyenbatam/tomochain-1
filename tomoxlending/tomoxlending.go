@@ -100,7 +100,7 @@ func (l *Lending) Version() uint64 {
 	return ProtocolVersion
 }
 
-func (l *Lending) ProcessOrderPending(header *types.Header, coinbase common.Address, chain consensus.ChainContext, pending map[common.Address]types.LendingTransactions, statedb *state.StateDB, lendingStatedb *lendingstate.LendingStateDB, tradingStateDb *tradingstate.TradingStateDB) ([]*lendingstate.LendingItem, map[common.Hash]lendingstate.MatchingResult) {
+func (l *Lending) ProcessOrderPending(tokenDecimals map[common.Address]*big.Int, header *types.Header, coinbase common.Address, chain consensus.ChainContext, pending map[common.Address]types.LendingTransactions, statedb *state.StateDB, lendingStatedb *lendingstate.LendingStateDB, tradingStateDb *tradingstate.TradingStateDB) ([]*lendingstate.LendingItem, map[common.Hash]lendingstate.MatchingResult) {
 	lendingItems := []*lendingstate.LendingItem{}
 	matchingResults := map[common.Hash]lendingstate.MatchingResult{}
 
@@ -157,7 +157,7 @@ func (l *Lending) ProcessOrderPending(header *types.Header, coinbase common.Addr
 			order.Status = lendingstate.LendingStatusCancelled
 		}
 
-		newTrades, newRejectedOrders, err := l.CommitOrder(header, coinbase, chain, statedb, lendingStatedb, tradingStateDb, lendingstate.GetLendingOrderBookHash(order.LendingToken, order.Term), order)
+		newTrades, newRejectedOrders, err := l.CommitOrder(tokenDecimals, header, coinbase, chain, statedb, lendingStatedb, tradingStateDb, lendingstate.GetLendingOrderBookHash(order.LendingToken, order.Term), order)
 		for _, reject := range newRejectedOrders {
 			log.Debug("Reject order", "reject", *reject)
 		}
@@ -827,7 +827,7 @@ func (l *Lending) RollbackLendingData(txhash common.Hash) error {
 	return nil
 }
 
-func (l *Lending) ProcessLiquidationData(header *types.Header, chain consensus.ChainContext, statedb *state.StateDB, tradingState *tradingstate.TradingStateDB, lendingState *lendingstate.LendingStateDB) (updatedTrades map[common.Hash]*lendingstate.LendingTrade, liquidatedTrades, autoRepayTrades, autoTopUpTrades, autoRecallTrades []*lendingstate.LendingTrade, err error) {
+func (l *Lending) ProcessLiquidationData(tokenDecimals map[common.Address]*big.Int, header *types.Header, chain consensus.ChainContext, statedb *state.StateDB, tradingState *tradingstate.TradingStateDB, lendingState *lendingstate.LendingStateDB) (updatedTrades map[common.Hash]*lendingstate.LendingTrade, liquidatedTrades, autoRepayTrades, autoTopUpTrades, autoRecallTrades []*lendingstate.LendingTrade, err error) {
 	time := header.Time
 	updatedTrades = map[common.Hash]*lendingstate.LendingTrade{} // sum of liquidatedTrades, autoRepayTrades, autoTopUpTrades, autoRecallTrades
 	liquidatedTrades = []*lendingstate.LendingTrade{}
@@ -853,7 +853,7 @@ func (l *Lending) ProcessLiquidationData(header *types.Header, chain consensus.C
 		for lowestTime.Sign() > 0 && lowestTime.Cmp(time) < 0 {
 			for _, tradingId := range tradingIds {
 				log.Debug("ProcessRepay", "lowestTime", lowestTime, "time", time, "lendingBook", lendingBook.Hex(), "tradingId", tradingId.Hex())
-				trade, err := l.ProcessRepayLendingTrade(header, chain, lendingState, statedb, tradingState, lendingBook, tradingId.Big().Uint64())
+				trade, err := l.ProcessRepayLendingTrade(tokenDecimals, header, chain, lendingState, statedb, tradingState, lendingBook, tradingId.Big().Uint64())
 				if err != nil {
 					log.Error("Fail when process payment ", "time", time, "lendingBook", lendingBook.Hex(), "tradingId", tradingId, "error", err)
 					return updatedTrades, liquidatedTrades, autoRepayTrades, autoTopUpTrades, autoRecallTrades, err
@@ -873,7 +873,7 @@ func (l *Lending) ProcessLiquidationData(header *types.Header, chain consensus.C
 
 	for _, lendingPair := range allPairs {
 		orderbook := tradingstate.GetTradingOrderBookHash(lendingPair.CollateralToken, lendingPair.LendingToken)
-		_, collateralPrice, err := l.GetCollateralPrices(header, chain, statedb, tradingState, lendingPair.CollateralToken, lendingPair.LendingToken)
+		_, collateralPrice, err := l.GetCollateralPrices(tokenDecimals, header, chain, statedb, tradingState, lendingPair.CollateralToken, lendingPair.LendingToken)
 		if err != nil || collateralPrice == nil || collateralPrice.Sign() == 0 {
 			log.Error("Fail when get price collateral/lending ", "CollateralToken", lendingPair.CollateralToken.Hex(), "LendingToken", lendingPair.LendingToken.Hex(), "error", err)
 			// ignore this pair, do not throw error

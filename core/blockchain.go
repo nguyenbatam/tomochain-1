@@ -165,6 +165,7 @@ type BlockChain struct {
 	resultLendingTrade  *lru.Cache
 	rejectedLendingItem *lru.Cache
 	finalizedTrade      *lru.Cache // include both trades which force update to closed/liquidated by the protocol
+	tokenDecimals       map[common.Address]*big.Int
 }
 
 // NewBlockChain returns a fully initialised block chain using information
@@ -218,6 +219,7 @@ func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, chainConfig *par
 		resultLendingTrade:  resultLendingTrade,
 		rejectedLendingItem: rejectedLendingItem,
 		finalizedTrade:      finalizedTrade,
+		tokenDecimals:       make(map[common.Address]*big.Int),
 	}
 	bc.SetValidator(NewBlockValidator(chainConfig, bc, engine))
 	bc.SetProcessor(NewStateProcessor(chainConfig, bc, engine))
@@ -1528,6 +1530,7 @@ func (bc *BlockChain) insertChain(chain types.Blocks) (int, []interface{}, []*ty
 		if err != nil {
 			return i, events, coalescedLogs, err
 		}
+		bc.tokenDecimals = UpdateAllTokensDecimal(bc, statedb, bc.tokenDecimals)
 		author, err := bc.Engine().Author(block.Header()) // Ignore error, we're past header validation
 		if err != nil {
 			bc.reportBlock(block, nil, err)
@@ -1567,7 +1570,7 @@ func (bc *BlockChain) insertChain(chain types.Blocks) (int, []interface{}, []*ty
 				} else {
 					for _, txMatchBatch := range txMatchBatchData {
 						log.Debug("Verify matching transaction", "txHash", txMatchBatch.TxHash.Hex())
-						err := bc.Validator().ValidateTradingOrder(statedb, tradingState, txMatchBatch, author, block.Header())
+						err := bc.Validator().ValidateTradingOrder(bc.tokenDecimals, statedb, tradingState, txMatchBatch, author, block.Header())
 						if err != nil {
 							bc.reportBlock(block, nil, err)
 							return i, events, coalescedLogs, err
@@ -1581,7 +1584,7 @@ func (bc *BlockChain) insertChain(chain types.Blocks) (int, []interface{}, []*ty
 					}
 					for _, batch := range batches {
 						log.Debug("Verify matching transaction", "txHash", batch.TxHash.Hex())
-						err := bc.Validator().ValidateLendingOrder(statedb, lendingState, tradingState, batch, author, block.Header())
+						err := bc.Validator().ValidateLendingOrder(bc.tokenDecimals, statedb, lendingState, tradingState, batch, author, block.Header())
 						if err != nil {
 							bc.reportBlock(block, nil, err)
 							return i, events, coalescedLogs, err
@@ -1590,7 +1593,7 @@ func (bc *BlockChain) insertChain(chain types.Blocks) (int, []interface{}, []*ty
 					// liquidate / finalize open lendingTrades
 					if block.Number().Uint64()%bc.chainConfig.Posv.Epoch == common.LiquidateLendingTradeBlock {
 						finalizedTrades := map[common.Hash]*lendingstate.LendingTrade{}
-						finalizedTrades, _, _, _, _, err = lendingService.ProcessLiquidationData(block.Header(), bc, statedb, tradingState, lendingState)
+						finalizedTrades, _, _, _, _, err = lendingService.ProcessLiquidationData(bc.tokenDecimals, block.Header(), bc, statedb, tradingState, lendingState)
 						if err != nil {
 							return i, events, coalescedLogs, fmt.Errorf("failed to ProcessLiquidationData. Err: %v ", err)
 						}
@@ -1860,7 +1863,7 @@ func (bc *BlockChain) getResultBlock(block *types.Block, verifiedM2 bool) (*Resu
 				}
 				for _, txMatchBatch := range txMatchBatchData {
 					log.Debug("Verify matching transaction", "txHash", txMatchBatch.TxHash.Hex())
-					err := bc.Validator().ValidateTradingOrder(statedb, tradingState, txMatchBatch, author, block.Header())
+					err := bc.Validator().ValidateTradingOrder(bc.tokenDecimals, statedb, tradingState, txMatchBatch, author, block.Header())
 					if err != nil {
 						bc.reportBlock(block, nil, err)
 						return nil, err
@@ -1873,7 +1876,7 @@ func (bc *BlockChain) getResultBlock(block *types.Block, verifiedM2 bool) (*Resu
 				}
 				for _, batch := range batches {
 					log.Debug("Lending Verify matching transaction", "txHash", batch.TxHash.Hex())
-					err := bc.Validator().ValidateLendingOrder(statedb, lendingState, tradingState, batch, author, block.Header())
+					err := bc.Validator().ValidateLendingOrder(bc.tokenDecimals, statedb, lendingState, tradingState, batch, author, block.Header())
 					if err != nil {
 						bc.reportBlock(block, nil, err)
 						return nil, err
@@ -1882,7 +1885,7 @@ func (bc *BlockChain) getResultBlock(block *types.Block, verifiedM2 bool) (*Resu
 				// liquidate / finalize open lendingTrades
 				if block.Number().Uint64()%bc.chainConfig.Posv.Epoch == common.LiquidateLendingTradeBlock {
 					finalizedTrades := map[common.Hash]*lendingstate.LendingTrade{}
-					finalizedTrades, _, _, _, _, err = lendingService.ProcessLiquidationData(block.Header(), bc, statedb, tradingState, lendingState)
+					finalizedTrades, _, _, _, _, err = lendingService.ProcessLiquidationData(bc.tokenDecimals, block.Header(), bc, statedb, tradingState, lendingState)
 					if err != nil {
 						return nil, fmt.Errorf("failed to ProcessLiquidationData. Err: %v ", err)
 					}
@@ -2568,7 +2571,7 @@ func (bc *BlockChain) logExchangeData(block *types.Block) {
 			if ok && rejected != nil {
 				rejectedOrders = rejected.([]*tradingstate.OrderItem)
 			}
-			
+
 			txMatchTime := time.Unix(block.Header().Time.Int64(), 0).UTC()
 			if err := tomoXService.SyncDataToSDKNode(takerOrderInTx, txMatchBatch.TxHash, txMatchTime, currentState, trades, rejectedOrders, &dirtyOrderCount); err != nil {
 				log.Crit("failed to SyncDataToSDKNode ", "blockNumber", block.Number(), "err", err)

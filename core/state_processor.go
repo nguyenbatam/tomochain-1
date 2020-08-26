@@ -18,7 +18,9 @@ package core
 
 import (
 	"fmt"
+	"github.com/tomochain/tomochain/consensus/posv"
 	"github.com/tomochain/tomochain/tomox/tradingstate"
+	"github.com/tomochain/tomochain/tomoxlending/lendingstate"
 	"math/big"
 	"runtime"
 	"sync"
@@ -63,7 +65,7 @@ func NewStateProcessor(config *params.ChainConfig, bc *BlockChain, engine consen
 // Process returns the receipts and logs accumulated during the process and
 // returns the amount of gas that was used in the process. If any of the
 // transactions failed to execute due to insufficient gas it will return an error.
-func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, tradingState *tradingstate.TradingStateDB, cfg vm.Config, balanceFee map[common.Address]*big.Int) (types.Receipts, []*types.Log, uint64, error) {
+func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, tradingState *tradingstate.TradingStateDB, cfg vm.Config, balanceFee map[common.Address]*big.Int) (types.Receipts, []*types.Log, uint64,error) {
 	var (
 		receipts types.Receipts
 		usedGas  = new(uint64)
@@ -82,6 +84,14 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, tra
 	InitSignerInTransactions(p.config, header, block.Transactions())
 	balanceUpdated := map[common.Address]*big.Int{}
 	totalFeeUsed := big.NewInt(0)
+	engine, _ := p.engine.(*posv.Posv)
+	isSDKNode := false
+	if engine != nil {
+		tradingService := engine.GetTomoXService()
+		if tradingService != nil {
+			isSDKNode = tradingService.IsSDKNode()
+		}
+	}
 	for i, tx := range block.Transactions() {
 		// check black-list txs after hf
 		if (block.Number().Uint64() >= common.BlackListHFNumber) && !common.IsTestnet {
@@ -109,12 +119,15 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, tra
 			}
 		}
 		statedb.Prepare(tx.Hash(), block.Hash(), i)
-		receipt, gas, err, tokenFeeUsed := ApplyTransaction(p.config, balanceFee, p.bc, nil, gp, statedb, tradingState, header, tx, usedGas, cfg)
+		receipt, gas, tokenFeeUsed, lendingMatchingResults, err := ApplyTransaction(p.config, balanceFee, p.bc, nil, gp, statedb, tradingState, header, tx, usedGas, cfg)
 		if err != nil {
 			return nil, nil, 0, err
 		}
 		receipts = append(receipts, receipt)
 		allLogs = append(allLogs, receipt.Logs...)
+		if isSDKNode{
+			p.bc.AddLendingResult(tx.Hash(), lendingMatchingResults)
+		}
 		if tokenFeeUsed {
 			fee := new(big.Int).SetUint64(gas)
 			if block.Header().Number.Cmp(common.TIPTRC21Fee) > 0 {
@@ -128,7 +141,7 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, tra
 	state.UpdateTRC21Fee(statedb, balanceUpdated, totalFeeUsed)
 	// Finalize the block, applying any consensus engine specific extras (e.g. block rewards)
 	p.engine.Finalize(p.bc, header, statedb, parentState, block.Transactions(), block.Uncles(), receipts)
-	return receipts, allLogs, *usedGas, nil
+	return receipts, allLogs, *usedGas,  nil
 }
 
 func (p *StateProcessor) ProcessBlockNoValidator(cBlock *CalculatedBlock, statedb *state.StateDB, tradingState *tradingstate.TradingStateDB, cfg vm.Config, balanceFee map[common.Address]*big.Int) (types.Receipts, []*types.Log, uint64, error) {
@@ -157,6 +170,14 @@ func (p *StateProcessor) ProcessBlockNoValidator(cBlock *CalculatedBlock, stated
 
 	if cBlock.stop {
 		return nil, nil, 0, ErrStopPreparingBlock
+	}
+	engine, _ := p.engine.(*posv.Posv)
+	isSDKNode := false
+	if engine != nil {
+		tradingService := engine.GetTomoXService()
+		if tradingService != nil {
+			isSDKNode = tradingService.IsSDKNode()
+		}
 	}
 	// Iterate over and process the individual transactions
 	receipts = make([]*types.Receipt, block.Transactions().Len())
@@ -187,12 +208,15 @@ func (p *StateProcessor) ProcessBlockNoValidator(cBlock *CalculatedBlock, stated
 			}
 		}
 		statedb.Prepare(tx.Hash(), block.Hash(), i)
-		receipt, gas, err, tokenFeeUsed := ApplyTransaction(p.config, balanceFee, p.bc, nil, gp, statedb, tradingState, header, tx, usedGas, cfg)
+		receipt, gas, tokenFeeUsed, lendingMatchingResults, err := ApplyTransaction(p.config, balanceFee, p.bc, nil, gp, statedb, tradingState, header, tx, usedGas, cfg)
 		if err != nil {
 			return nil, nil, 0, err
 		}
 		if cBlock.stop {
 			return nil, nil, 0, ErrStopPreparingBlock
+		}
+		if isSDKNode{
+			p.bc.AddLendingResult(tx.Hash(), lendingMatchingResults)
 		}
 		receipts[i] = receipt
 		allLogs = append(allLogs, receipt.Logs...)
@@ -216,7 +240,7 @@ func (p *StateProcessor) ProcessBlockNoValidator(cBlock *CalculatedBlock, stated
 // and uses the input parameters for its environment. It returns the receipt
 // for the transaction, gas used and an error if the transaction failed,
 // indicating the block was invalid.
-func ApplyTransaction(config *params.ChainConfig, tokensFee map[common.Address]*big.Int, bc *BlockChain, author *common.Address, gp *GasPool, statedb *state.StateDB, tomoxState *tradingstate.TradingStateDB, header *types.Header, tx *types.Transaction, usedGas *uint64, cfg vm.Config) (*types.Receipt, uint64, error, bool) {
+func ApplyTransaction(config *params.ChainConfig, tokensFee map[common.Address]*big.Int, bc *BlockChain, author *common.Address, gp *GasPool, statedb *state.StateDB, tomoxState *tradingstate.TradingStateDB, header *types.Header, tx *types.Transaction, usedGas *uint64, cfg vm.Config) (*types.Receipt, uint64, bool, map[common.Hash]lendingstate.MatchingResult, error) {
 	if tx.To() != nil && tx.To().String() == common.BlockSigners && config.IsTIPSigning(header.Number) {
 		return ApplySignTransaction(config, statedb, header, tx, usedGas)
 	}
@@ -242,7 +266,7 @@ func ApplyTransaction(config *params.ChainConfig, tokensFee map[common.Address]*
 	}
 	msg, err := tx.AsMessage(types.MakeSigner(config, header.Number), balanceFee, header.Number)
 	if err != nil {
-		return nil, 0, err, false
+		return nil, 0, false, nil, err
 	}
 	// Create a new context to be used in the EVM environment
 	context := NewEVMContext(msg, header, bc, author)
@@ -264,7 +288,7 @@ func ApplyTransaction(config *params.ChainConfig, tokensFee map[common.Address]*
 	_, gas, failed, err := ApplyMessage(vmenv, msg, gp, coinbaseOwner)
 
 	if err != nil {
-		return nil, 0, err, false
+		return nil, 0, false, nil, err
 	}
 	// Update the state with pending changes
 	var root []byte
@@ -290,10 +314,10 @@ func ApplyTransaction(config *params.ChainConfig, tokensFee map[common.Address]*
 	if balanceFee != nil && failed {
 		state.PayFeeWithTRC21TxFail(statedb, msg.From(), *tx.To())
 	}
-	return receipt, gas, err, balanceFee != nil
+	return receipt, gas, balanceFee != nil, vmenv.GetLendingMatchingResults(), err
 }
 
-func ApplySignTransaction(config *params.ChainConfig, statedb *state.StateDB, header *types.Header, tx *types.Transaction, usedGas *uint64) (*types.Receipt, uint64, error, bool) {
+func ApplySignTransaction(config *params.ChainConfig, statedb *state.StateDB, header *types.Header, tx *types.Transaction, usedGas *uint64) (*types.Receipt, uint64, bool, map[common.Hash]lendingstate.MatchingResult, error) {
 	// Update the state with pending changes
 	var root []byte
 	if config.IsByzantium(header.Number) {
@@ -303,13 +327,13 @@ func ApplySignTransaction(config *params.ChainConfig, statedb *state.StateDB, he
 	}
 	from, err := types.Sender(types.MakeSigner(config, header.Number), tx)
 	if err != nil {
-		return nil, 0, err, false
+		return nil, 0, false, nil, err
 	}
 	nonce := statedb.GetNonce(from)
 	if nonce < tx.Nonce() {
-		return nil, 0, ErrNonceTooHigh, false
+		return nil, 0, false, nil, ErrNonceTooHigh
 	} else if nonce > tx.Nonce() {
-		return nil, 0, ErrNonceTooLow, false
+		return nil, 0, false, nil, ErrNonceTooLow
 	}
 	statedb.SetNonce(from, nonce+1)
 	// Create a new receipt for the transaction, storing the intermediate root and gas used by the tx
@@ -325,10 +349,10 @@ func ApplySignTransaction(config *params.ChainConfig, statedb *state.StateDB, he
 	statedb.AddLog(log)
 	receipt.Logs = statedb.GetLogs(tx.Hash())
 	receipt.Bloom = types.CreateBloom(types.Receipts{receipt})
-	return receipt, 0, nil, false
+	return receipt, 0, false, nil, nil
 }
 
-func ApplyEmptyTransaction(config *params.ChainConfig, statedb *state.StateDB, header *types.Header, tx *types.Transaction, usedGas *uint64) (*types.Receipt, uint64, error, bool) {
+func ApplyEmptyTransaction(config *params.ChainConfig, statedb *state.StateDB, header *types.Header, tx *types.Transaction, usedGas *uint64) (*types.Receipt, uint64, bool, map[common.Hash]lendingstate.MatchingResult, error) {
 	// Update the state with pending changes
 	var root []byte
 	if config.IsByzantium(header.Number) {
@@ -349,7 +373,7 @@ func ApplyEmptyTransaction(config *params.ChainConfig, statedb *state.StateDB, h
 	statedb.AddLog(log)
 	receipt.Logs = statedb.GetLogs(tx.Hash())
 	receipt.Bloom = types.CreateBloom(types.Receipts{receipt})
-	return receipt, 0, nil, false
+	return receipt, 0, false, nil, nil
 }
 
 func InitSignerInTransactions(config *params.ChainConfig, header *types.Header, txs types.Transactions) {

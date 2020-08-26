@@ -146,13 +146,14 @@ type OrderPool struct {
 	locals  *orderAccountSet // Set of local transaction to exempt from eviction rules
 	journal *ordertxJournal  // Journal of local transaction to back up to disk
 
-	pending   map[common.Address]*ordertxList         // All currently processable transactions
-	queue     map[common.Address]*ordertxList         // Queued but non-processable transactions
-	beats     map[common.Address]time.Time            // Last heartbeat from each known account
-	all       map[common.Hash]*types.OrderTransaction // All transactions to allow lookups
-	wg        sync.WaitGroup                          // for shutdown sync
-	homestead bool
-	IsSigner  func(address common.Address) bool
+	pending       map[common.Address]*ordertxList         // All currently processable transactions
+	queue         map[common.Address]*ordertxList         // Queued but non-processable transactions
+	beats         map[common.Address]time.Time            // Last heartbeat from each known account
+	all           map[common.Hash]*types.OrderTransaction // All transactions to allow lookups
+	wg            sync.WaitGroup                          // for shutdown sync
+	homestead     bool
+	IsSigner      func(address common.Address) bool
+	tokenDecimals map[common.Address]*big.Int
 }
 
 // NewOrderPool creates a new transaction pool to gather, sort and filter inbound
@@ -471,13 +472,13 @@ func (pool *OrderPool) validateOrder(tx *types.OrderTransaction) error {
 			if tomoXServ == nil {
 				return fmt.Errorf("tomox not found in order validation")
 			}
-			baseDecimal, err := tomoXServ.GetTokenDecimal(pool.chain, cloneStateDb, tx.BaseToken())
-			if err != nil {
-				return fmt.Errorf("validateOrder: failed to get baseDecimal. err: %v", err)
+			baseDecimal := pool.tokenDecimals[tx.BaseToken()]
+			if baseDecimal == nil || baseDecimal.Sign() == 0 {
+				return fmt.Errorf("validateOrder: failed to get baseDecimal. baseDecimal: %v", baseDecimal)
 			}
-			quoteDecimal, err := tomoXServ.GetTokenDecimal(pool.chain, cloneStateDb, tx.QuoteToken())
-			if err != nil {
-				return fmt.Errorf("validateOrder: failed to get quoteDecimal. err: %v", err)
+			quoteDecimal := pool.tokenDecimals[tx.QuoteToken()]
+			if quoteDecimal == nil || quoteDecimal.Sign() == 0 {
+				return fmt.Errorf("validateOrder: failed to get quoteDecimal. quoteDecimal: %v", quoteDecimal)
 			}
 			if err := tradingstate.VerifyBalance(cloneStateDb, cloneTomoXStateDb, tx, baseDecimal, quoteDecimal); err != nil {
 				return err

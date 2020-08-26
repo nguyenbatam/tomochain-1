@@ -694,7 +694,7 @@ func (api *PrivateDebugAPI) computeTxEnv(blockHash common.Hash, txIndex int, ree
 			context := core.NewEVMContext(msg, block.Header(), api.eth.blockchain, nil)
 			return msg, context, statedb, nil
 		}
-		_, gas, err, tokenFeeUsed := core.ApplyTransaction(api.config, feeCapacity, api.eth.blockchain, nil, gp, statedb, tomoxState, block.Header(), tx, usedGas, vm.Config{})
+		_, gas, tokenFeeUsed, _, err:= core.ApplyTransaction(api.config, feeCapacity, api.eth.blockchain, nil, gp, statedb, tomoxState, block.Header(), tx, usedGas, vm.Config{})
 		if err != nil {
 			return nil, vm.Context{}, nil, fmt.Errorf("tx %x failed: %v", tx.Hash(), err)
 		}

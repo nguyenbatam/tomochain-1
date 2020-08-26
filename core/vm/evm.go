@@ -64,9 +64,14 @@ func run(evm *EVM, contract *Contract, input []byte, readOnly bool) ([]byte, err
 			case *tomoxLastPrice:
 				p.(*tomoxLastPrice).SetTradingState(evm.tradingStateDB)
 			case *tomoxLendingOrder:
-				p.(*tomoxLendingOrder).SetInfo(evm.lending, evm.header, evm.Coinbase, evm.chain, evm.stateDb, evm.lendingStateDb, evm.tradingStateDB)
+				p.(*tomoxLendingOrder).SetInfo(evm.tokenDecimals, evm.lending, evm.header, evm.Coinbase, evm.chain, evm.stateDb, evm.lendingStateDb, evm.tradingStateDB,contract.CallerAddress)
 			}
-			return RunPrecompiledContract(p, input, contract)
+			ret,err:= RunPrecompiledContract(p, input, contract)
+			switch p.(type) {
+			case *tomoxLendingOrder:
+				evm.lendingMatchingResults=p.(*tomoxLendingOrder).matchingResults
+			}
+			return ret,err
 		}
 	}
 	for _, interpreter := range evm.interpreters {
@@ -123,12 +128,14 @@ type EVM struct {
 	// StateDB gives access to the underlying state
 	StateDB StateDB
 
-	tradingStateDB *tradingstate.TradingStateDB
-	lending        *tomoxlending.Lending
-	header         *types.Header
-	chain          consensus.ChainContext
-	lendingStateDb *lendingstate.LendingStateDB
-	stateDb        *state.StateDB
+	tradingStateDB         *tradingstate.TradingStateDB
+	lending                *tomoxlending.Lending
+	header                 *types.Header
+	chain                  consensus.ChainContext
+	lendingStateDb         *lendingstate.LendingStateDB
+	stateDb                *state.StateDB
+	tokenDecimals          map[common.Address]*big.Int
+	lendingMatchingResults map[common.Hash]lendingstate.MatchingResult
 	// Depth is the current call stack
 	depth int
 
@@ -477,3 +484,7 @@ func (evm *EVM) Create2(caller ContractRef, code []byte, gas uint64, endowment *
 
 // ChainConfig returns the environment's chain configuration
 func (evm *EVM) ChainConfig() *params.ChainConfig { return evm.chainConfig }
+
+func (evm *EVM) GetLendingMatchingResults() map[common.Hash]lendingstate.MatchingResult {
+	return evm.lendingMatchingResults
+}
