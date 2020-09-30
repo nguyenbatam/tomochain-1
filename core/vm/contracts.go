@@ -66,6 +66,7 @@ var PrecompiledContractsByzantium = map[common.Address]PrecompiledContract{
 	common.BytesToAddress([]byte{40}): &bulletproofVerifier{},
 	common.BytesToAddress([]byte{41}): &tomoxLastPrice{},
 	common.BytesToAddress([]byte{42}): &tomoxEpochPrice{},
+	common.BytesToAddress([]byte{43}): &tomoxLendingOrder{},
 }
 
 // PrecompiledContractsIstanbul contains the default set of pre-compiled Ethereum
@@ -84,6 +85,7 @@ var PrecompiledContractsIstanbul = map[common.Address]PrecompiledContract{
 	common.BytesToAddress([]byte{40}): &bulletproofVerifier{},
 	common.BytesToAddress([]byte{41}): &tomoxLastPrice{},
 	common.BytesToAddress([]byte{42}): &tomoxEpochPrice{},
+	common.BytesToAddress([]byte{43}): &tomoxLendingOrder{},
 }
 
 // RunPrecompiledContract runs and evaluates the output of a precompiled contract.
